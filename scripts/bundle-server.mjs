@@ -10,6 +10,9 @@ import { serverLocalePlugin } from "./server-locale-plugin.mjs";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const server = join(root, "server");
 
+// The desktop, the image and the npm package ship this folder whole, so it holds only what this run writes.
+rmSync(join(root, "dist-server"), { recursive: true, force: true });
+
 // yaml's Node export is CommonJS with dynamic requires that cannot run once
 // inlined into ESM; its browser export is the same parser without them.
 const yamlEsmPlugin = {
@@ -40,8 +43,7 @@ const ENTRY_POINTS = [
   "cloud-home-start.ts",
   // the container image's entry point
   "server-launcher.ts",
-  // Imported directly by the packaged smoke probes. An explicit root sibling,
-  // because tsc may emit its own copy under dist-server/server/.
+  // Imported directly by the packaged smoke probes.
   "proxy-paths.ts",
   "local-computer.ts",
   "local-computer-proxy.ts",
@@ -78,8 +80,6 @@ await build({
   minifyWhitespace: true,
   minifySyntax: true,
   lineLimit: 500,
-  // Written after tsc, replacing its output for these entry points.
-  allowOverwrite: true,
   logLevel: "info",
   plugins: [yamlEsmPlugin, serverLocalePlugin],
   banner: NODE_REQUIRE,
@@ -169,7 +169,3 @@ await build({ entryPoints: [piMcpExtSrc], outfile: piMcpExtDest, bundle: true,
 // package.json, and the server reports this one (server/environment.ts).
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 writeFileSync(join(root, "dist-server", "package.json"), `${JSON.stringify({ type: "module", version })}\n`);
-
-// tsc copies the language packs server/server-lines.ts imports (13 MB) beside its own output. The bundles above carry
-// the server's keys, so nothing reads the copies.
-rmSync(join(root, "dist-server", "src", "locales"), { recursive: true, force: true });

@@ -125,7 +125,8 @@ export default async function afterPack(context) {
   const arch = { 1: "x64", 3: "arm64" }[context.arch];
   // electron-builder warns and skips missing extraResources. A real package
   // must fail here, before signing, rather than silently ship without Chrome.
-  if (hasBrowser || context.packager) {
+  // The Windows package carries no browser: the server installs the engine on request and runs the installed Chrome.
+  if (hasBrowser || (context.packager && context.electronPlatformName !== "win32")) {
     if (!arch) throw new Error(`Unsupported desktop browser package architecture: ${context.arch}`);
     await verifyBrowserBundle(browserRoot, `${context.electronPlatformName}-${arch}`);
   }

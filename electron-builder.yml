@@ -15,7 +15,7 @@ protocols:
 # stranded on its installed version.
 publish:
   - provider: github
-    owner: milind-soni
+    owner: MarkTaylorTsai
     repo: OpenMausBot
 
 directories:
@@ -54,8 +54,10 @@ files:
 
 asar: true
 
-# Windows and Linux name the locale files en-US.pak, macOS en_US.lproj, and electron-builder matches the spelling exactly.
+# Windows and Linux name the locale files en-US.pak, macOS en.lproj and en_GB.lproj, and electron-builder matches the
+# spelling exactly.
 electronLanguages:
+  - en
   - en-US
   - en-GB
   - en_GB
@@ -198,14 +200,10 @@ win:
   target:
     - target: nsis
       arch: x64
-    - target: zip
-      arch: x64
   icon: build/icon.ico
   extraResources:
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
-    - from: dist-native/browser/win32-x64
-      to: browser-engine
     - from: dist-native/duckdb/win32-x64/node_modules
       to: duckdb/node_modules
     # CUA driver and SDK for Windows — must live outside ASAR for native modules

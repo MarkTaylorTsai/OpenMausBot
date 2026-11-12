@@ -1,12 +1,7 @@
 {
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
-    "noEmit": false,
-    "tsBuildInfoFile": "node_modules/.cache/tsc/server-build.tsbuildinfo",
-    "outDir": "dist-server",
-    "rewriteRelativeImportExtensions": true,
-    "declaration": false,
-    "sourceMap": false
+    "tsBuildInfoFile": "node_modules/.cache/tsc/server-build.tsbuildinfo"
   },
   "exclude": [
     "server/**/*.test.ts",

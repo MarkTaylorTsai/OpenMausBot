@@ -47,6 +47,7 @@ const include = [
 export default defineConfig({
   plugins: [react(), tailwindcss(), railPage()],
   build: {
+    reportCompressedSize: false,
     rollupOptions: { input: { index: page("./index.html"), rail: page("./rail.html") } },
   },
   define: {

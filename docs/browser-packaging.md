@@ -1,7 +1,10 @@
 # Browser-ready desktop packages
 
-Desktop installers include the pinned `agent-browser` engine and Chromium
-Headless Shell. A fresh installation needs no separate browser download.
+macOS and Linux installers include the pinned `agent-browser` engine and
+Chromium Headless Shell. A fresh installation there needs no separate browser
+download. The Windows installer carries neither: the Browser panel installs
+the pinned engine on request, and bots run the installed Google Chrome or the
+downloaded Chrome for Testing.
 This is an automation browser, not a headed Google Chrome application.
 Browser access is on by default, both for the workspace (Settings) and for
 each bot (its computer panel); switching either off withholds the browser,
@@ -9,11 +12,11 @@ and bundling executables never overrides that switch.
 
 ## Package layout and lookup
 
-`pnpm package:prepare` runs `pnpm build:browser`. It downloads verified vendor
+The macOS and Linux package scripts run `pnpm build:browser`. It downloads verified vendor
 archives and stages `dist-native/browser/PLATFORM-ARCH`, copied as
 `Resources/browser-engine` on macOS or `resources/browser-engine` elsewhere.
-Each package includes only its target architecture: macOS ARM64/x64,
-Windows x64, or Linux x64.
+Each package includes only its target architecture: macOS ARM64/x64 or
+Linux x64.
 
 The server receives `OMB_RESOURCES_PATH` from Electron. It resolves an explicit
 `OMB_AGENT_BROWSER_PATH` override first, then the complete bundled engine and
