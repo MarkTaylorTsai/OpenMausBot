@@ -1,9 +1,10 @@
 import { MentionText } from "./MentionText";
 import type { MentionPeer } from "@/lib/mentions";
-import { createContext, Fragment, useContext, useMemo, useRef, type ReactNode } from "react";
-import { botOpensTo, openBot, openThread, useStore, type Action, type AppState, type Bot, type Group, type ThreadTarget } from "@/state/store";
+import { createContext, Fragment, useContext, useMemo, type ReactNode } from "react";
+import { botOpensTo, openBot, openThread, type Action, type AppState, type Bot, type Group, type ThreadTarget } from "@/state/store";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { useStoreRef } from "@/state/store-ref";
+import { useStoreSelector } from "@/state/store-select";
 import { t } from "@/lib/i18n";
 import { parseBotRefUrl, parseThreadRefUrl, resolveThreadRefAddress, splitThreadRefsForDisplay, type ThreadRefCandidate } from "@/lib/thread-refs";
 
@@ -37,17 +38,21 @@ export function collectThreadRefs(
   return refs;
 }
 
-const signatureOf = (refs: ThreadRefCandidate[]) =>
-  refs.map((ref) => `${ref.botId}\u0000${ref.threadId}\u0000${ref.title}\u0000${ref.activeAt ?? ""}\u0000${ref.botName}`).join("\u0001");
+const sameRef = (a: ThreadRefCandidate, b: ThreadRefCandidate) =>
+  a.botId === b.botId && a.threadId === b.threadId && a.title === b.title && a.activeAt === b.activeAt && a.botName === b.botName;
+const sameRefs = (a: ThreadRefCandidate[], b: ThreadRefCandidate[]) => a.length === b.length && a.every((ref, index) => sameRef(ref, b[index]!));
 
 export function ThreadRefsProvider({ children }: { children: ReactNode }) {
-  const { state } = useStore();
-  const next = collectThreadRefs(state.bots, state.groups);
-  const signature = signatureOf(next);
-  const cache = useRef({ signature, threads: next });
-  if (cache.current.signature !== signature) cache.current = { signature, threads: next };
-  const threads = cache.current.threads;
-  const currentBotId = state.selectedId;
+  const collected = useMemo<{ bots?: AppState["bots"]; groups?: AppState["groups"]; threads: ThreadRefCandidate[] }>(() => ({ threads: [] }), []);
+  const threads = useStoreSelector((state) => {
+    if (collected.bots !== state.bots || collected.groups !== state.groups) {
+      collected.threads = collectThreadRefs(state.bots, state.groups);
+      collected.bots = state.bots;
+      collected.groups = state.groups;
+    }
+    return collected.threads;
+  }, sameRefs);
+  const currentBotId = useStoreSelector((state) => state.selectedId);
   const value = useMemo(() => ({ threads, currentBotId }), [threads, currentBotId]);
   return <ThreadRefsContext.Provider value={value}>{children}</ThreadRefsContext.Provider>;
 }

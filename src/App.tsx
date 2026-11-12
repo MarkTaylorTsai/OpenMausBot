@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, Loader2, Menu } from "lucide-react";
 import { CLOUD_LINK_SETTINGS, openBot, StoreProvider, useStore } from "@/state/store";
+import { sameFields, useStoreDispatch, useStoreSelector } from "@/state/store-select";
 import { nextShortcutBot, shortcutBots, shownBotIds } from "@/lib/sidebar-shortcut-order";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { useWelcomeViewer, WelcomeGate } from "@/components/onboarding/WelcomeGate";
@@ -81,102 +82,17 @@ import { PairPage } from "./pair/PairPage";
 import { WebPanelPage } from "@/components/WebPanelPage";
 import { AppPreviewPanel } from "@/components/published-apps/AppPreviewPanel";
 
-function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
+/** What the shell does with the whole store and draws nothing for: it follows every change, so the shell need not. */
+function ShellKeepers() {
   const { state, dispatch } = useStore();
-  useTeamChats(state.config);
-  const needsYou = needsYouVersion(state.bots, state.groups, state.notifications);
-  useTeamPeopleLoader(state.config, needsYou);
-  useInboxLoader(`${inboxVersion(state.bots) ?? ""}|${needsYou}`);
-  const inboxReady = useInboxReady();
-  const inboxShown = useInboxPanel().open && inboxReady;
   // A Switch AI pick lands once its stopped turn's chat is idle, wherever the person is by then.
   useAiSwitchKeeper({ bots: state.bots, dispatch });
   const showThreads = useShowThreads();
-  const { capabilities } = useDesktopCapabilities();
-  const captionChrome = useCaptionChrome();
   const unreadCount =
     state.bots.filter((bot) => !bot.hidden).reduce((sum, bot) => sum + botUnreadCount(bot), 0) +
     state.groups.filter((group) => group.unread).length;
-  const remoteClient = window.ogb?.remoteClient?.active === true;
-  const twoSidePanelsFit = useMediaQuery(TWO_SIDE_PANELS_FIT, true);
-  const sidebarAndPanelFit = useMediaQuery(SIDEBAR_AND_PANEL_FIT, true);
-  const sidebarInline = useMediaQuery(SIDEBAR_INLINE, false);
-  useEffect(() => {
-    if (!window.ogb?.environments) return;
-    const open = (computerId?: string | null) => {
-      if (computerId) {
-        const target = new URL(window.location.href);
-        target.searchParams.set("share-computer", computerId);
-        window.history.replaceState(null, "", `${target.pathname}${target.search}${target.hash}`);
-      }
-      dispatch({ type: "toggleAppSettings", open: true, section: "desktopWorkspaces" });
-    };
-    const url = new URL(window.location.href);
-    const requestedSettings = url.searchParams.get("desktop-settings");
-    const cloud = ["cloud", "cloud-settings", "cloud-add", "cloud-add-howto"].includes(requestedSettings ?? "");
-    if (requestedSettings === "workspaces" || (requestedSettings === "organization" && window.ogb.organization && !remoteClient) ||
-      (cloud && window.ogb.cloudAccount && !remoteClient)) {
-      url.searchParams.delete("desktop-settings");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-      if (requestedSettings === "organization") dispatch({ type: "toggleAppSettings", open: true, section: "organization" });
-      else if (requestedSettings === "cloud") dispatch(CLOUD_LINK_SETTINGS);
-      else if (requestedSettings === "cloud-settings") dispatch({ type: "toggleAppSettings", open: true, section: "cloudAccount" });
-      else if (requestedSettings === "cloud-add" || requestedSettings === "cloud-add-howto") dispatch({ type: "openCloudAdd", source: requestedSettings === "cloud-add" ? "app_menu" : "app_howto" });
-      else open();
-    }
-    return window.ogb.environments.onOpenSettings?.(open);
-  }, [dispatch]);
-  useEffect(() => {
-    const rest = takePhonePairingRequest(window.location.href);
-    if (rest === null) return;
-    window.history.replaceState(null, "", rest);
-    dispatch(phonePairingSettingsAction());
-  }, [dispatch]);
-  useConnectLink(dispatch, Boolean(state.config?.team));
   useExternalChatLinks(state, dispatch); useDesktopNotificationOpens(state, dispatch);
   usePresence(state, dispatch); useTeamPresence(state);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  usePageLanguage(effectiveLanguage(useLanguageChoice(), state.config?.language), true);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  // Stays mounted once opened: a Cloud bought in it can arrive after the sheet is closed.
-  const cloudAddOpened = useRef(false);
-  cloudAddOpened.current ||= Boolean(state.cloudAdd);
-  const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const closeDrawer = useCallback(() => { setDrawerOpen(false); menuButtonRef.current?.focus(); }, []);
-  const previousViewRef = useRef(state.activeView);
-  const calendarOriginRef = useRef<"chat" | "team-map" | "web-panel">("chat");
-  const loading = loadingLine({ connected: state.connected, hydrated: state.hydrated === true, developer: import.meta.env.DEV });
-  const group = state.groups.find((g) => g.id === state.selectedId);
-  const chiefStep = useChiefStepOpen();
-  const bot = group || chiefStep ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
-  const notificationFeed = useNotificationFeed() && !remoteClient;
-  const advanced = useAdvancedMode();
-  const roomPanelOpen = useRoomPanelShown({ group, state, simple: !advanced && !remoteClient });
-  const sidePanelOpen = (Boolean(bot) && (state.settingsOpen || state.computerOpen || state.inspectorOpen || state.activityOpen)) || roomPanelOpen || (notificationFeed && state.notificationsOpen) || inboxShown;
-  const collapseSidebar = sidePanelOpen && !sidebarAndPanelFit;
-  const calendarFocus = state.activeView === "routines" && state.routinesFocus.view === "calendar";
-  const notificationTray = notificationFeed && !calendarFocus;
-
-  const noEngines =
-    state.connected &&
-    state.instances.length > 0 &&
-    !state.instances.some((i) => i.snapshot.state === "available");
-  const cloudSignIn = cloudSignInDue(viewer, state, engineReady);
-  const cloudIntent = useCloudIntent();
-  const cloudAsk = cloudIntentShown(cloudIntentDue({
-    viewer, connected: state.connected, enginesKnown: state.instances.length > 0,
-    onboarding: state.config?.onboarding, reopened: false,
-  }), cloudIntent);
-  const cloudJobWaiting = Boolean(viewer?.cloudHome && viewer.canSave && cloudIntent.pending);
-  const welcome = useCloudWelcome();
-  const welcomeOnScreen = cloudWelcomeVisible({ viewer, connected: state.connected, enginesKnown: state.instances.length > 0, onboarding: state.config?.onboarding }, welcome)
-    && state.activeView === "chat" && !(!remoteClient && localVmWorkspaceBotId);
-  const firstRun = cloudFirstRun({ welcome: welcomeOnScreen, intent: cloudAsk, signIn: cloudSignIn || cloudJobWaiting });
-  const team = state.config?.team ?? null;
-  const invited = invitedToTeam(viewer);
-  const teamWelcomeRecord = useTeamWelcomeRecord(team && invited ? team.id : null);
-  const teamWelcomeOn = teamWelcomeDue({ team, invited, record: teamWelcomeRecord }) && state.activeView === "chat";
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -217,11 +133,111 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [state.bots, state.selectedId, state.shortcutsOpen, showThreads, dispatch]);
 
-  useReadShownChatOnFocus();
   useEffect(() => {
     if (window.ogb?.setUnreadCount) window.ogb.setUnreadCount(unreadCount);
     else showBrowserUnread(unreadCount);
   }, [unreadCount]);
+  return null;
+}
+
+function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
+  const dispatch = useStoreDispatch();
+  const state = useStoreSelector((s) => ({
+    config: s.config, cloudAdd: s.cloudAdd, activeView: s.activeView, connected: s.connected, hydrated: s.hydrated, selectedId: s.selectedId,
+    settingsOpen: s.settingsOpen, computerOpen: s.computerOpen, inspectorOpen: s.inspectorOpen, activityOpen: s.activityOpen,
+    notificationsOpen: s.notificationsOpen, routinesFocus: s.routinesFocus, instances: s.instances, shortcutsOpen: s.shortcutsOpen,
+    webPanelId: s.webPanelId, pluginsOpen: s.pluginsOpen, appSettingsOpen: s.appSettingsOpen, notice: s.notice,
+  }), sameFields);
+  useTeamChats(state.config);
+  const needsYou = useStoreSelector((s) => needsYouVersion(s.bots, s.groups, s.notifications));
+  useTeamPeopleLoader(state.config, needsYou);
+  const inbox = useStoreSelector((s) => inboxVersion(s.bots));
+  useInboxLoader(`${inbox ?? ""}|${needsYou}`);
+  const inboxReady = useInboxReady();
+  const inboxShown = useInboxPanel().open && inboxReady;
+  const { capabilities } = useDesktopCapabilities();
+  const captionChrome = useCaptionChrome();
+  const remoteClient = window.ogb?.remoteClient?.active === true;
+  const twoSidePanelsFit = useMediaQuery(TWO_SIDE_PANELS_FIT, true);
+  const sidebarAndPanelFit = useMediaQuery(SIDEBAR_AND_PANEL_FIT, true);
+  const sidebarInline = useMediaQuery(SIDEBAR_INLINE, false);
+  useEffect(() => {
+    if (!window.ogb?.environments) return;
+    const open = (computerId?: string | null) => {
+      if (computerId) {
+        const target = new URL(window.location.href);
+        target.searchParams.set("share-computer", computerId);
+        window.history.replaceState(null, "", `${target.pathname}${target.search}${target.hash}`);
+      }
+      dispatch({ type: "toggleAppSettings", open: true, section: "desktopWorkspaces" });
+    };
+    const url = new URL(window.location.href);
+    const requestedSettings = url.searchParams.get("desktop-settings");
+    const cloud = ["cloud", "cloud-settings", "cloud-add", "cloud-add-howto"].includes(requestedSettings ?? "");
+    if (requestedSettings === "workspaces" || (requestedSettings === "organization" && window.ogb.organization && !remoteClient) ||
+      (cloud && window.ogb.cloudAccount && !remoteClient)) {
+      url.searchParams.delete("desktop-settings");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      if (requestedSettings === "organization") dispatch({ type: "toggleAppSettings", open: true, section: "organization" });
+      else if (requestedSettings === "cloud") dispatch(CLOUD_LINK_SETTINGS);
+      else if (requestedSettings === "cloud-settings") dispatch({ type: "toggleAppSettings", open: true, section: "cloudAccount" });
+      else if (requestedSettings === "cloud-add" || requestedSettings === "cloud-add-howto") dispatch({ type: "openCloudAdd", source: requestedSettings === "cloud-add" ? "app_menu" : "app_howto" });
+      else open();
+    }
+    return window.ogb.environments.onOpenSettings?.(open);
+  }, [dispatch]);
+  useEffect(() => {
+    const rest = takePhonePairingRequest(window.location.href);
+    if (rest === null) return;
+    window.history.replaceState(null, "", rest);
+    dispatch(phonePairingSettingsAction());
+  }, [dispatch]);
+  useConnectLink(dispatch, Boolean(state.config?.team));
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  usePageLanguage(effectiveLanguage(useLanguageChoice(), state.config?.language), true);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Stays mounted once opened: a Cloud bought in it can arrive after the sheet is closed.
+  const cloudAddOpened = useRef(false);
+  cloudAddOpened.current ||= Boolean(state.cloudAdd);
+  const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeDrawer = useCallback(() => { setDrawerOpen(false); menuButtonRef.current?.focus(); }, []);
+  const previousViewRef = useRef(state.activeView);
+  const calendarOriginRef = useRef<"chat" | "team-map" | "web-panel">("chat");
+  const loading = loadingLine({ connected: state.connected, hydrated: state.hydrated === true, developer: import.meta.env.DEV });
+  const group = useStoreSelector((s) => s.groups.find((g) => g.id === s.selectedId));
+  const chiefStep = useChiefStepOpen();
+  const shownBot = useStoreSelector((s) => s.bots.find((b) => b.id === s.selectedId) ?? s.bots[0]);
+  const bot = group || chiefStep ? undefined : shownBot;
+  const notificationFeed = useNotificationFeed() && !remoteClient;
+  const advanced = useAdvancedMode();
+  const roomPanelOpen = useRoomPanelShown({ group, state, simple: !advanced && !remoteClient });
+  const sidePanelOpen = (Boolean(bot) && (state.settingsOpen || state.computerOpen || state.inspectorOpen || state.activityOpen)) || roomPanelOpen || (notificationFeed && state.notificationsOpen) || inboxShown;
+  const collapseSidebar = sidePanelOpen && !sidebarAndPanelFit;
+  const calendarFocus = state.activeView === "routines" && state.routinesFocus.view === "calendar";
+  const notificationTray = notificationFeed && !calendarFocus;
+
+  const noEngines =
+    state.connected &&
+    state.instances.length > 0 &&
+    !state.instances.some((i) => i.snapshot.state === "available");
+  const cloudSignIn = cloudSignInDue(viewer, state, engineReady);
+  const cloudIntent = useCloudIntent();
+  const cloudAsk = cloudIntentShown(cloudIntentDue({
+    viewer, connected: state.connected, enginesKnown: state.instances.length > 0,
+    onboarding: state.config?.onboarding, reopened: false,
+  }), cloudIntent);
+  const cloudJobWaiting = Boolean(viewer?.cloudHome && viewer.canSave && cloudIntent.pending);
+  const welcome = useCloudWelcome();
+  const welcomeOnScreen = cloudWelcomeVisible({ viewer, connected: state.connected, enginesKnown: state.instances.length > 0, onboarding: state.config?.onboarding }, welcome)
+    && state.activeView === "chat" && !(!remoteClient && localVmWorkspaceBotId);
+  const firstRun = cloudFirstRun({ welcome: welcomeOnScreen, intent: cloudAsk, signIn: cloudSignIn || cloudJobWaiting });
+  const team = state.config?.team ?? null;
+  const invited = invitedToTeam(viewer);
+  const teamWelcomeRecord = useTeamWelcomeRecord(team && invited ? team.id : null);
+  const teamWelcomeOn = teamWelcomeDue({ team, invited, record: teamWelcomeRecord }) && state.activeView === "chat";
+
+  useReadShownChatOnFocus();
 
   useEffect(() => {
     if (!state.connected) return;
@@ -468,6 +484,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       <WindowCaptionButtons
         visible={capabilities.windowChrome === "win-caption" && Boolean(window.ogb?.windowControls)}
       />
+      <ShellKeepers />
     </div>
   );
 }

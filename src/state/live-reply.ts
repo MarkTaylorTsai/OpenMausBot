@@ -8,6 +8,7 @@ import type { RuntimeEvent } from "../../shared/runtime-events";
 import { isClientCancellation } from "../../shared/client-cancel";
 import { redactSecretsInText } from "../../shared/redact";
 import type { Message } from "@/state/store";
+import { nextPaint } from "./app-store";
 
 export interface LiveReplyItem {
   key: string;
@@ -48,8 +49,41 @@ const streamed = new Set<string>();
  * turn boundary, since any item open across the gap lost its start. */
 let gapped = false;
 const boundarySinceGap = new Set<string>();
+const MAX_SHOWN_TEXTS = 64;
+const shownTexts = new Map<string, { raw: string; shown: string }>();
+const waitingThreads = new Set<string>();
+let cancelPaint: (() => void) | null = null;
 
-function put(threadId: string, next: ThreadReplies): void {
+function notify(threadId: string): void {
+  waitingThreads.delete(threadId);
+  for (const listener of Array.from(listeners.get(threadId) ?? [])) listener();
+}
+
+function openPaint(): void {
+  cancelPaint = nextPaint(() => {
+    cancelPaint = null;
+    flushLiveReplies();
+  });
+}
+
+/** Tells the readers of every thread whose words grew since the last paint, now. */
+export function flushLiveReplies(): void {
+  if (!waitingThreads.size) return;
+  if (!cancelPaint) openPaint();
+  for (const threadId of Array.from(waitingThreads)) notify(threadId);
+}
+
+/** Growing words reach their readers at most once per paint: the first of a paint at once, the rest at the next. */
+function notifyGrowth(threadId: string): void {
+  if (cancelPaint) {
+    waitingThreads.add(threadId);
+    return;
+  }
+  openPaint();
+  notify(threadId);
+}
+
+function put(threadId: string, next: ThreadReplies, growth = false): void {
   const current = threads.get(threadId);
   if (current && current.items === next.items && current.skipping === next.skipping) return;
   if (next.items.length > MAX_ITEMS) next = { ...next, items: next.items.slice(-MAX_ITEMS) };
@@ -57,7 +91,8 @@ function put(threadId: string, next: ThreadReplies): void {
   if (next.items.length || next.skipping) threads.set(threadId, next);
   if (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value!);
   if ((current?.items ?? EMPTY) === next.items) return;
-  for (const listener of Array.from(listeners.get(threadId) ?? [])) listener();
+  if (growth) notifyGrowth(threadId);
+  else notify(threadId);
 }
 
 function firstSeen(eventId: string): boolean {
@@ -88,13 +123,13 @@ export function noteLiveReplyEvent(event: RuntimeEvent): void {
     const at = event.itemId ? items.findIndex((item) => item.itemId === event.itemId) : legacyOpen(items, event.turnId);
     const growing = items[at];
     if (growing) {
-      if (!growing.done) put(threadId, { ...current, items: items.map((item, index) => index === at ? { ...item, text: item.text + event.delta, ...(event.botId ? { botId: event.botId } : {}) } : item) });
+      if (!growing.done) put(threadId, { ...current, items: items.map((item, index) => index === at ? { ...item, text: item.text + event.delta, ...(event.botId ? { botId: event.botId } : {}) } : item) }, true);
       return;
     }
     // The server opens a message only once the one before it is over: an earlier one still open never completes.
     const fresh: LiveReplyItem = { key: event.itemId ?? event.eventId, ...(event.itemId ? { itemId: event.itemId } : {}),
       ...(event.turnId ? { turnId: event.turnId } : {}), ...(event.botId ? { botId: event.botId } : {}), text: event.delta, at: Date.now(), done: false };
-    put(threadId, { ...current, items: [...kept(items, (item) => item.done), fresh] });
+    put(threadId, { ...current, items: [...kept(items, (item) => item.done), fresh] }, true);
   } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
     if (!firstSeen(event.eventId)) return;
     if (gapped) boundarySinceGap.add(threadId);
@@ -176,11 +211,25 @@ export function isLiveReply(message: Pick<Message, "id">): boolean {
   return message.id.startsWith(LIVE_ID);
 }
 
-/** What a streaming item shows. The last word waits for the space after it, so a secret is masked whole or not shown. */
-export function liveReplyText(item: Pick<LiveReplyItem, "text" | "done">): string {
+/** What a streaming item shows. The last word waits for the space after it, so a secret is masked whole or not shown.
+ * Security: the words are always masked as one text, never a delta at a time, so a secret split across deltas is
+ * masked; an item's masked text is reused only for the exact text it was made from. */
+export function liveReplyText(item: Pick<LiveReplyItem, "text" | "done"> & { key?: string }): string {
   const end = item.done ? item.text.length : Math.max(item.text.lastIndexOf(" "), item.text.lastIndexOf("\n")) + 1;
-  const text = item.text.slice(0, end);
-  return isClientCancellation(text) ? "" : redactSecretsInText(text);
+  const raw = item.text.slice(0, end);
+  const { key } = item;
+  if (key === undefined) return shownText(raw);
+  const last = shownTexts.get(key);
+  if (last?.raw === raw) return last.shown;
+  const shown = shownText(raw);
+  shownTexts.delete(key);
+  shownTexts.set(key, { raw, shown });
+  if (shownTexts.size > MAX_SHOWN_TEXTS) shownTexts.delete(shownTexts.keys().next().value!);
+  return shown;
+}
+
+function shownText(raw: string): string {
+  return isClientCancellation(raw) ? "" : redactSecretsInText(raw);
 }
 
 function subscribe(threadId: string | null | undefined, listener: () => void): () => void {
@@ -281,4 +330,8 @@ export function resetLiveReplies(): void {
   streamed.clear();
   gapped = false;
   boundarySinceGap.clear();
+  shownTexts.clear();
+  waitingThreads.clear();
+  cancelPaint?.();
+  cancelPaint = null;
 }

@@ -41,7 +41,7 @@ vi.mock("./ModelPicker", () => ({ ModelPicker: (_props: ComponentProps<typeof Mo
 vi.mock("./ApprovalModeSelector", () => ({ ApprovalModeSelector: (_props: ComponentProps<typeof ApprovalModeSelector>) => createElement("span") }));
 
 const { ChatView } = await import("./ChatView");
-const { noteLiveReplyEvent, noteLiveReplyMessage, resetLiveReplies } = await import("@/state/live-reply");
+const { flushLiveReplies, noteLiveReplyEvent, noteLiveReplyMessage, resetLiveReplies } = await import("@/state/live-reply");
 const { resetTurnLive } = await import("@/state/turn-status");
 
 const THREAD = "selected";
@@ -57,7 +57,7 @@ let seq = 0;
 const frame = (event: Partial<RuntimeEvent>) => ({
   eventId: `e${++seq}`, provider: "claudeAgent", threadId: THREAD, createdAt: new Date().toISOString(), turnId: "t1", ...event,
 } as RuntimeEvent);
-const engine = (event: Partial<RuntimeEvent>) => act(() => noteLiveReplyEvent(frame(event)));
+const engine = (event: Partial<RuntimeEvent>) => act(() => { noteLiveReplyEvent(frame(event)); flushLiveReplies(); });
 const sayIn = (delta: string, itemId: string) => engine({ type: "content.delta", streamKind: "assistant_text", delta, itemId } as Partial<RuntimeEvent>);
 const say = (delta: string) => engine({ type: "content.delta", streamKind: "assistant_text", delta } as Partial<RuntimeEvent>);
 
