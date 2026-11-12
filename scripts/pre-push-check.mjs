@@ -37,14 +37,35 @@ export function checksFor(files) {
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
 
+/** How to start a command without a shell. A tool under node_modules/.bin is a shell script on every platform but
+ * Windows, where spawnSync cannot run it at all (ENOENT, and the .cmd next to it is refused too), so run the package's
+ * own entry file with this node instead. Anything else starts as it is. A tool that is not installed throws. */
+export function launcher(command, args, root = process.cwd()) {
+  const tool = /^node_modules\/\.bin\/([^/]+)$/.exec(command)?.[1];
+  if (!tool) return { command, args };
+  const manifest = join(root, "node_modules", tool, "package.json");
+  if (!existsSync(manifest)) throw new Error(`${tool} is not installed (${manifest} is missing)`);
+  const bin = JSON.parse(readFileSync(manifest, "utf8")).bin;
+  const file = typeof bin === "string" ? bin : bin?.[tool];
+  const entry = file ? join(root, "node_modules", tool, file) : "";
+  if (!file || !existsSync(entry)) throw new Error(`${tool} has no entry file (${entry || "no bin in its package.json"})`);
+  return { command: process.execPath, args: [entry, ...args] };
+}
+
+/** What a spawn that returned an error means for the push. Out of time is CI's to settle; a tool that could not start
+ * is a broken checkout, and passing it on would let the push go with nothing checked. */
+const startFailure = (error) => error && error.code !== "ETIMEDOUT" ? `${error.code ?? "error"}: ${error.message}` : undefined;
+
 /** Vitest's own verdict from its report, since a dependency out of step fails before any test runs. A guard reads the
  * whole tree, so a failure that names none of the push's files is main's own, and that is CI's to report. */
 function runGuards(guards, files, timeout) {
   const dir = mkdtempSync(join(tmpdir(), "omb-pre-push-"));
   const report = join(dir, "report.json");
   try {
-    const run = spawnSync("node_modules/.bin/vitest", ["run", ...guards, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`], { encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 });
-    if (run.error) return { unknown: run.error.code === "ETIMEDOUT" ? `past ${BUDGET_MS / 1000} s` : run.error.code };
+    const tool = launcher("node_modules/.bin/vitest", ["run", ...guards, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`]);
+    const run = spawnSync(tool.command, tool.args, { encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 });
+    if (run.error?.code === "ETIMEDOUT") return { unknown: `past ${BUDGET_MS / 1000} s` };
+    if (run.error) return { failed: true, why: startFailure(run.error) };
     if (!existsSync(report)) return { unknown: "it did not start" };
     if (JSON.parse(readFileSync(report, "utf8")).numFailedTests === 0) return {};
     const output = `${run.stdout}${run.stderr}`;
@@ -55,7 +76,7 @@ function runGuards(guards, files, timeout) {
     }
     return { unknown: "a failure that names no file of this push, so main may be red" };
   } catch (error) {
-    return { unknown: error.message };
+    return { failed: true, why: error.message };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -86,11 +107,19 @@ function main() {
       const verdict = runGuards(guards, present, left);
       if (verdict.unknown) console.log(`pre-push: ${name} did not settle it (${verdict.unknown}), so CI will check them`);
       bad = verdict.failed;
+      if (verdict.why) console.error(`pre-push: ${name} could not run: ${verdict.why}`);
     } else {
-      const run = spawnSync(command, args, { encoding: "utf8", timeout: left, maxBuffer: 16 * 1024 * 1024 });
-      if (run.error) console.log(`pre-push: ${name} did not finish (${run.error.code}), so CI will check it`);
-      bad = !run.error && run.status !== 0;
-      if (bad) console.error(`${run.stdout}${run.stderr}`);
+      let run;
+      try {
+        const tool = launcher(command, args);
+        run = spawnSync(tool.command, tool.args, { encoding: "utf8", timeout: left, maxBuffer: 16 * 1024 * 1024 });
+      } catch (error) {
+        run = { error };
+      }
+      if (run.error?.code === "ETIMEDOUT") console.log(`pre-push: ${name} did not finish in time, so CI will check it`);
+      else if (run.error) console.error(`pre-push: ${name} could not run: ${startFailure(run.error) ?? run.error.message}`);
+      bad = run.error ? run.error.code !== "ETIMEDOUT" : run.status !== 0;
+      if (bad && !run.error) console.error(`${run.stdout}${run.stderr}`);
     }
     if (bad) {
       console.error(`pre-push: ${name} failed. Fix it, or push with OMB_SKIP_HOOKS=1 to let CI report it.`);

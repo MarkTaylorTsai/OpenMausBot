@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../server/testing/cleanup.ts";
-import { checksFor, pushedCommits } from "./pre-push-check.mjs";
+import { checksFor, launcher, pushedCommits } from "./pre-push-check.mjs";
 
 const names = (files: string[]) => checksFor(files).map((check: { name: string }) => check.name);
 const guards = (files: string[]) => checksFor(files).find((check: { name: string }) => check.name === "source guards")?.guards ?? [];
@@ -38,6 +38,29 @@ describe("what a push's changed files call for", () => {
     expect(pushedCommits(`refs/heads/x ${sha} refs/heads/x ${"0".repeat(40)}\n`)).toEqual([sha]);
     expect(pushedCommits(`(delete) ${"0".repeat(40)} refs/heads/x ${sha}\n`)).toEqual([]);
     expect(pushedCommits("")).toEqual([]);
+  });
+});
+
+describe("starting the tools, which a Windows checkout has no runnable file for in .bin", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+
+  it("runs oxlint and vitest through this node and their package entries", () => {
+    for (const tool of ["oxlint", "vitest"]) {
+      const { command, args } = launcher(`node_modules/.bin/${tool}`, ["--version"], root);
+      expect(command).toBe(process.execPath);
+      const run = spawnSync(command, args, { cwd: root, encoding: "utf8", timeout: 60_000 });
+      expect(run.error).toBeUndefined();
+      expect(run.status).toBe(0);
+      expect(run.stdout.trim()).not.toBe("");
+    }
+  });
+
+  it("starts any other command as it is", () => {
+    expect(launcher("node", ["a.mjs"], root)).toEqual({ command: "node", args: ["a.mjs"] });
+  });
+
+  it("throws for a tool that is not installed, so the push stops instead of passing unchecked", () => {
+    expect(() => launcher("node_modules/.bin/no-such-tool", [], root)).toThrow(/not installed/);
   });
 });
 
