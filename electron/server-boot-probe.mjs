@@ -1,6 +1,7 @@
 export const BOOT_PROBE_FAST_INTERVAL_MS = 25;
 export const BOOT_PROBE_FAST_WINDOW_MS = 5_000;
-export const BOOT_PROBE_INTERVAL_MS = 500;
+// Windows cold starts run past the fast window, and at 500 ms "ready" trailed the server's listening line by up to half a second.
+export const BOOT_PROBE_INTERVAL_MS = 100;
 
 export const SERVER_BOOT_TIMEOUT_MS = 60_000;
 export const SERVER_LISTENING_GRACE_MS = 180_000;

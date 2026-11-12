@@ -17,6 +17,8 @@
     // parameter properties, enums and namespaces, so the compiler does too.
     "erasableSyntaxOnly": true,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsc/server.tsbuildinfo",
     "types": [
       "node"
     ]

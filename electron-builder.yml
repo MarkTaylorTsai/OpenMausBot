@@ -34,6 +34,9 @@ afterPack: ./scripts/after-pack.mjs
 files:
   - electron/**
   - "!electron/**/*.test.*"
+  - "!electron/**/*.node-test.*"
+  - "!electron/fixtures/**"
+  - "!electron/updater-test-fixture.mjs"
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"
   - "!electron/resources/speech-helper-Info.plist"
@@ -50,6 +53,34 @@ files:
   - package.json
 
 asar: true
+
+# Windows and Linux name the locale files en-US.pak, macOS en_US.lproj, and electron-builder matches the spelling exactly.
+electronLanguages:
+  - en-US
+  - en-GB
+  - en_GB
+  - de
+  - es
+  - es-419
+  - es_419
+  - fr
+  - hi
+  - it
+  - ja
+  - ko
+  - pl
+  - pt-BR
+  - pt_BR
+  - pt-PT
+  - pt_PT
+  - ru
+  - tr
+  - uk
+  - vi
+  - zh-CN
+  - zh_CN
+  - zh-TW
+  - zh_TW
 
 extraResources:
   # Ship the app's own license terms in every desktop distribution.

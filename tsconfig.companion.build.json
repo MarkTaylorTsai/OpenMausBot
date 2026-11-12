@@ -2,6 +2,7 @@
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
     "noEmit": false,
+    "tsBuildInfoFile": "node_modules/.cache/tsc/companion-build.tsbuildinfo",
     "outDir": "dist-companion",
     "rootDir": "companion/src",
     "rewriteRelativeImportExtensions": true,
