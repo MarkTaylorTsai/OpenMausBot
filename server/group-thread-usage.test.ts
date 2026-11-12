@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, readFileSync, readdirSync, statSync, openSync, readSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,12 +17,15 @@ describe("group thread accounting", () => {
     write("2026-08", [row("2026-08-02", { input: 75 })]);
     write("2026-09", [row("2026-09-02", { input: 90 })]);
     const reader = load(dir);
-    vi.mocked(readFileSync).mockClear(); vi.mocked(readdirSync).mockClear(); vi.mocked(statSync).mockClear();
+    for (const spied of [readFileSync, readdirSync, statSync, openSync, readSync]) vi.mocked(spied).mockClear();
     for (let i = 0; i < 100; i++) expect(reader.forThread("room")?.input).toBe(165);
     expect(readFileSync).not.toHaveBeenCalled(); expect(readdirSync).not.toHaveBeenCalled(); expect(statSync).not.toHaveBeenCalled();
     appendFileSync(join(dir, "usage", "2026-09.jsonl"), JSON.stringify(row("2026-09-03")) + "\n");
     reader.refresh();
-    expect(readFileSync).toHaveBeenCalledExactlyOnceWith(join(dir, "usage", "2026-09.jsonl"), "utf8");
+    expect(readFileSync).not.toHaveBeenCalled();
+    expect(openSync).toHaveBeenCalledExactlyOnceWith(join(dir, "usage", "2026-09.jsonl"), "r");
+    const appended = Buffer.byteLength(JSON.stringify(row("2026-09-03")) + "\n");
+    expect(vi.mocked(readSync).mock.calls.reduce((sum, call) => sum + Number((call as unknown[])[3]), 0)).toBeLessThanOrEqual(appended + 64);
     expect(reader.forThread("room")).toMatchObject({ input: 265, turns: 3, lastTurn: { input: 100 } });
   });
 

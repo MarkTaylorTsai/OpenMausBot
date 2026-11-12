@@ -54,6 +54,8 @@ export type QuietState =
 export interface ProcessSample {
   /** CPU time of the whole tree, or null when it could not be read */
   cpuMs: number | null;
+  /** when the process table behind this sample was read, where one reading serves several samples */
+  at?: number;
   /** established TCP connections held by the tree, or null when unknown */
   connections: number | null;
 }
@@ -172,15 +174,15 @@ export function treePids(rows: Array<{ pid: number; ppid: number }>, root: numbe
     if (list) list.push(r.pid);
     else kids.set(r.ppid, [r.pid]);
   }
-  const out: number[] = [];
+  const seen = new Set<number>();
   const queue = [root];
-  while (queue.length && out.length < 512) {
-    const pid = queue.shift()!;
-    if (out.includes(pid)) continue;
-    out.push(pid);
-    queue.push(...(kids.get(pid) ?? []));
+  for (let next = 0; next < queue.length && seen.size < 512; next += 1) {
+    const pid = queue[next]!;
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    for (const kid of kids.get(pid) ?? []) queue.push(kid);
   }
-  return out;
+  return [...seen];
 }
 
 /** A process start is read to the second (`ps` etime), so a call's own processes may look this much older than it. */
@@ -214,30 +216,75 @@ async function samplePosix(root: number, since?: number): Promise<ProcessSample>
   return { cpuMs, connections };
 }
 
-async function sampleWindows(root: number, since?: number): Promise<ProcessSample> {
-  const own = since === undefined ? ""
-    : `$from=[DateTimeOffset]::FromUnixTimeMilliseconds(${Math.floor(since - START_SLACK_MS)}).LocalDateTime;` +
-      `$ids=@($all|Where-Object{($ids -contains $_.ProcessId) -and $_.ProcessId -ne ${root} -and $_.CreationDate -ge $from}|ForEach-Object{$_.ProcessId});` +
-      "if(-not $ids.Count){Write-Output 'none';exit};";
-  const script =
-    "$ErrorActionPreference='SilentlyContinue';" +
-    "$all=Get-CimInstance Win32_Process|Select-Object ProcessId,ParentProcessId,KernelModeTime,UserModeTime,CreationDate;" +
-    `$ids=@(${root});$q=@(${root});` +
-    "while($q.Count){$p=$q[0];$q=@($q|Select-Object -Skip 1);foreach($c in $all|Where-Object{$_.ParentProcessId -eq $p}){if($ids -notcontains $c.ProcessId){$ids+=$c.ProcessId;$q+=$c.ProcessId}}};" +
-    own +
-    "$cpu=($all|Where-Object{$ids -contains $_.ProcessId}|ForEach-Object{[double]$_.KernelModeTime+[double]$_.UserModeTime}|Measure-Object -Sum).Sum/10000;" +
-    "$n=@(Get-NetTCPConnection -State Established|Where-Object{$ids -contains $_.OwningProcess}).Count;" +
-    "Write-Output \"$cpu $n\"";
-  const out = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], 8_000);
-  if (out?.trim() === "none") return { cpuMs: null, connections: null };
-  const [cpu, n] = (out ?? "").trim().split(/\s+/);
-  const cpuMs = Number(cpu);
-  const connections = Number(n);
-  return {
-    cpuMs: cpu !== undefined && Number.isFinite(cpuMs) ? cpuMs : null,
-    connections: n !== undefined && Number.isFinite(connections) ? connections : null,
+/** One reading shared by every caller within `ttlMs` of it, callers that arrive while it is still being read included. */
+export function sharedReading<T>(take: () => Promise<T>, ttlMs: () => number, now: () => number = Date.now): () => Promise<T> {
+  let held: { at: number; value: Promise<T> } | null = null;
+  return () => {
+    const at = now();
+    if (!held || at - held.at >= ttlMs()) held = { at, value: take() };
+    return held.value;
   };
 }
+
+export interface WindowsSnapshot {
+  at: number;
+  rows: Array<{ pid: number; ppid: number; cpuMs: number; startedAt: number | null }>;
+  /** established TCP connections by owning process */
+  connections: Map<number, number>;
+}
+
+// Win32_Process counts KernelModeTime and UserModeTime in 100 ns units.
+const WINDOWS_SNAPSHOT_SCRIPT =
+  "$ErrorActionPreference='SilentlyContinue';" +
+  "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,KernelModeTime,UserModeTime,CreationDate|ForEach-Object{" +
+  "$s='';if($_.CreationDate){$s=([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()};" +
+  "\"P $($_.ProcessId) $($_.ParentProcessId) $($_.KernelModeTime) $($_.UserModeTime) $s\"};" +
+  "Get-NetTCPConnection -State Established|ForEach-Object{\"C $($_.OwningProcess)\"}";
+
+/** The whole process table and every established connection, or null when the table could not be read. */
+export function parseWindowsSnapshot(text: string, at: number): WindowsSnapshot | null {
+  const rows: WindowsSnapshot["rows"] = [];
+  const connections = new Map<number, number>();
+  for (const line of text.split("\n")) {
+    const [kind, ...fields] = line.trim().split(/\s+/);
+    if (kind === "C") {
+      const pid = Number(fields[0]);
+      if (fields[0] && Number.isFinite(pid)) connections.set(pid, (connections.get(pid) ?? 0) + 1);
+    } else if (kind === "P") {
+      const [pid, ppid, kernel, user, started] = fields.map(Number);
+      if (fields.length < 4 || !Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+      rows.push({
+        pid: pid!, ppid: ppid!, cpuMs: ((kernel || 0) + (user || 0)) / 10_000,
+        startedAt: fields[4] && Number.isFinite(started) ? started! : null,
+      });
+    }
+  }
+  return rows.length ? { at, rows, connections } : null;
+}
+
+export function sampleWindowsSnapshot(snapshot: WindowsSnapshot | null, root: number, since?: number): ProcessSample {
+  if (!snapshot) return { cpuMs: null, connections: null };
+  const pids = new Set(since === undefined ? treePids(snapshot.rows, root) : startedSince(snapshot.rows, root, since));
+  if (!pids.size) return { cpuMs: null, connections: null };
+  let cpuMs = 0, connections = 0;
+  for (const row of snapshot.rows) if (pids.has(row.pid)) cpuMs += row.cpuMs;
+  for (const pid of pids) connections += snapshot.connections.get(pid) ?? 0;
+  return { cpuMs, connections, at: snapshot.at };
+}
+
+const windowsSnapshot = sharedReading(async () => {
+  const at = Date.now();
+  const out = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SNAPSHOT_SCRIPT], 12_000);
+  return out === null ? null : parseWindowsSnapshot(out, at);
+}, () => quietTickMs() * 0.9);
+
+async function sampleWindows(root: number, since?: number): Promise<ProcessSample> {
+  return sampleWindowsSnapshot(await windowsSnapshot(), root, since);
+}
+
+/** The time between two samples: between the readings behind them when both say, else `fallbackMs`. */
+export const sampleGapMs = (sample: ProcessSample, previous: ProcessSample | null, fallbackMs: number): number =>
+  sample.at !== undefined && previous?.at !== undefined ? sample.at - previous.at : fallbackMs;
 
 /** What Linux's /proc says, read through these (a test passes a fake tree). */
 export interface ProcReader {
@@ -375,8 +422,8 @@ export function classifyQuiet(input: {
   const nearFullContext = input.context !== null && input.context.threshold > 0
     && input.context.tokens >= input.context.threshold * 0.9;
   if (sample.connections !== null && sample.connections > 0) return { kind: "waiting-model", nearFullContext };
-  const cpuDelta = sample.cpuMs !== null && previous?.cpuMs != null ? sample.cpuMs - previous.cpuMs : null;
-  if (cpuDelta !== null && input.sinceMs > 0 && cpuDelta > BUSY_CPU_MS_PER_MIN * (input.sinceMs / 60_000)) return { kind: "busy" };
+  const cpuDelta = sample.cpuMs !== null && previous?.cpuMs != null && input.sinceMs > 0 ? sample.cpuMs - previous.cpuMs : null;
+  if (cpuDelta !== null && cpuDelta > BUSY_CPU_MS_PER_MIN * (input.sinceMs / 60_000)) return { kind: "busy" };
   if (sample.connections === 0 && cpuDelta !== null) return { kind: "no-signs" };
   return { kind: "unknown" };
 }

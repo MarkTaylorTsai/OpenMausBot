@@ -22,7 +22,7 @@ import { runAcpOneShot } from "./background-text.ts";
 import { acpNativeLogMessage } from "./tool-log.ts";
 import { stripLeakedSystemHarnessMessages } from "../../../shared/system-message-guard.ts";
 import {
-  classifyQuiet, describeQuiet, formatQuietLimit, quietNoticeText, lastSeenPhrase, LIMIT_WORDS, LogTail, promptIdleTimeoutMs, quietKey, quietNoticeMs, quietTickMs, quietVerdict, sampleProcessTree,
+  classifyQuiet, describeQuiet, formatQuietLimit, quietNoticeText, lastSeenPhrase, LIMIT_WORDS, LogTail, promptIdleTimeoutMs, quietKey, quietNoticeMs, quietTickMs, quietVerdict, sampleGapMs, sampleProcessTree,
   type LogSignal, type ProcessSample, type QuietState,
 } from "./quiet-status.ts";
 import { readSessionReport } from "./session-reports.ts";
@@ -62,7 +62,7 @@ import { commandSummary, toolDetailPreview } from "../../tool-summary.ts";
 import { acpToolEndEvents } from "./tool-items.ts";
 import { AcpHost } from "./host.ts";
 import { exitDetail } from "./exit-report.ts";
-import { endTurn, trackRunningTool, type AcpAskFinish, type AcpSession, type AcpTurn } from "./turn-state.ts";
+import { appendReplyText, endTurn, trackRunningTool, type AcpAskFinish, type AcpSession, type AcpTurn } from "./turn-state.ts";
 import { recoveryPromptFor } from "../../resume-recovery.ts";
 import { noticeFailure } from "../../chat-notices.ts";
 import { armIdleClose, engineIdleMs, sessionIdlePolicy, stopIdleClose } from "../session-idle.ts";
@@ -532,7 +532,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           probing = false;
           if (current.state.settled || session.current !== current) return;
           let next = classifyQuiet({
-            logged: logged?.signal ?? null, context, sample, previous, sinceMs: previous ? now - previousAt : 0,
+            logged: logged?.signal ?? null, context, sample, previous, sinceMs: previous ? sampleGapMs(sample, previous, now - previousAt) : 0,
           });
           const first = previous === null;
           previous = sample;
@@ -867,11 +867,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 if (support.resendsReasoningReply && messageId && messageId === current.state.textMessageId
                     && isHermesReasoningReplay(delta, current.state.text)) break;
                 current.state.textMessageId = messageId;
-                current.state.text += delta;
-                const trimmed = current.state.text.trimStart();
-                if (!trimmed.startsWith("<SYSTEM_MESSAGE") &&
-                    !trimmed.startsWith("The following is a <SYSTEM_MESSAGE") &&
-                    !trimmed.startsWith("<SYSTEM_NOTIFICATION")) {
+                if (appendReplyText(current.state, delta)) {
                   emit({ ...base(threadId, current.turnId), type: "content.delta", streamKind: "assistant_text", delta });
                 }
               }

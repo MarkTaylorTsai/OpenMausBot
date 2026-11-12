@@ -21,7 +21,7 @@ export interface AcpTurn {
   turnConfig: AcpConfig;
   controlsHost: boolean;
   state: {
-    settled: boolean; promptSent: boolean; text: string; textMessageId: string | null; producedItem: boolean; repliedText: boolean; startupActivity: boolean; stopped: boolean;
+    settled: boolean; promptSent: boolean; text: string; textLead?: string; textMessageId: string | null; producedItem: boolean; repliedText: boolean; startupActivity: boolean; stopped: boolean;
     usagePeak: number | null;
     usageLast: number | null;
     usageCompacted: boolean;
@@ -75,6 +75,19 @@ export function trackRunningTool(current: AcpTurn, update: { toolCallId?: unknow
   const status = update.status ?? defaultStatus;
   if (status === "completed" || status === "failed") current.runningTools.delete(update.toolCallId);
   else if (status === "pending" || status === "in_progress") current.runningTools.add(update.toolCallId);
+}
+
+const HIDDEN_REPLY_STARTS = ["<SYSTEM_MESSAGE", "The following is a <SYSTEM_MESSAGE", "<SYSTEM_NOTIFICATION"];
+const HIDDEN_START_LENGTH = Math.max(...HIDDEN_REPLY_STARTS.map((start) => start.length));
+
+/** Adds `delta` to the turn's reply text and says whether the reply so far may be streamed: one that opens as an
+ * engine's own system message is not. */
+export function appendReplyText(state: AcpTurn["state"], delta: string): boolean {
+  const lead = state.text ? state.textLead ?? state.text.trimStart() : "";
+  const next = lead.length >= HIDDEN_START_LENGTH ? lead : (lead + delta).trimStart();
+  state.textLead = next;
+  state.text += delta;
+  return !HIDDEN_REPLY_STARTS.some((start) => next.startsWith(start));
 }
 
 export interface AcpTurnEnd {

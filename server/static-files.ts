@@ -1,5 +1,5 @@
 // The desktop bundle served from OMB_STATIC_DIR: content types, cache rules and the SPA fallback.
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 
@@ -22,13 +22,34 @@ const PAGE_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-f
 /** Pages with an entry of their own: the app, and the desktop window's rail of places. */
 const PAGES: Record<string, string> = { "/": "/index.html", "/rail": "/rail.html" };
 
+const CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const cached = new Map<string, { mtimeMs: number; size: number; data: Buffer }>();
+let cachedBytes = 0;
+
+/** The file's bytes, read again only when its size or modification time changed. */
+function readStatic(file: string): Buffer {
+  const stat = statSync(file);
+  const hit = cached.get(file);
+  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.data;
+  const data = readFileSync(file);
+  if (hit) {
+    cachedBytes -= hit.size;
+    cached.delete(file);
+  }
+  if (data.length === stat.size && cachedBytes + data.length <= CACHE_MAX_BYTES) {
+    cached.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, data });
+    cachedBytes += data.length;
+  }
+  return data;
+}
+
 /** Public by design: the same bundle anyone can download, with no secrets, and /pair must load before a session exists. */
 export function serveStatic(res: ServerResponse, path: string, staticDir: string | null): boolean {
   if (!staticDir) return false;
   const safe = PAGES[path] ?? path.replace(/\.\./g, "");
   const file = join(staticDir, safe);
   try {
-    const data = readFileSync(file);
+    const data = readStatic(file);
     const type = MIME[extname(file)] ?? "application/octet-stream";
     // Vite content-hashes every file under /assets/, so those URLs are immutable while public/ has no assets/ dir.
     const cache = type === "text/html" ? "no-cache" : safe.startsWith("/assets/") ? "public, max-age=31536000, immutable" : null;
@@ -38,7 +59,7 @@ export function serveStatic(res: ServerResponse, path: string, staticDir: string
   } catch {
       // SPA fallback, never immutable: a missing chunk answered with the page must not stay cached under the chunk's URL.
     try {
-      const data = readFileSync(join(staticDir, "index.html"));
+      const data = readStatic(join(staticDir, "index.html"));
       res.writeHead(200, { "content-type": "text/html", "cache-control": "no-cache", ...PAGE_HEADERS });
       res.end(data);
       return true;

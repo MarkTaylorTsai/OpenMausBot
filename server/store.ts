@@ -39,7 +39,7 @@ import { parseConnectorTools } from "./connector-tools.ts";
 import { sameModelSelection } from "../shared/thread-model.ts";
 import { initialGreetingMessage } from "./initial-greeting.ts"; import { createDefaultBot, defaultBotRefusal, type DefaultBotIntro } from "./default-bot.ts";
 import { appsFromCreator } from "./inherited-apps.ts"; import { newBotOwner, sharedAsMaker, sharedUnlessRestricted, type NewBotSharingRule } from "./new-bot-sharing.ts";
-import { ThreadCache, type ThreadState } from "./thread-cache.ts";
+import { activePathOf, ThreadCache, type ThreadState } from "./thread-cache.ts";
 import { titleFromMessage, UNTITLED_TASK } from "./thread-title.ts";
 export { titleFromMessage, UNTITLED_TASK } from "./thread-title.ts";
 export type {
@@ -588,10 +588,13 @@ export class Store {
   /** In memory only: message writes must not rewrite bots.json. */
   private noteThreadActivity(threadId: string, at: number, forOrder = false, orderAt = at): void {
     if (!Number.isFinite(at)) return;
-    for (const task of [...this.bots, ...this.groups].map((owner) => owner.tasks?.find((candidate) => candidate.threadId === threadId))) {
-      if (!task) continue;
-      task.updatedAt = Math.max(task.updatedAt ?? 0, at);
-      if (forOrder) task.lastThreadOrderAt = Math.max(task.lastThreadOrderAt ?? 0, orderAt);
+    for (const owners of [this.bots, this.groups]) {
+      for (const owner of owners) {
+        const task = owner.tasks?.find((candidate) => candidate.threadId === threadId);
+        if (!task) continue;
+        task.updatedAt = Math.max(task.updatedAt ?? 0, at);
+        if (forOrder) task.lastThreadOrderAt = Math.max(task.lastThreadOrderAt ?? 0, orderAt);
+      }
     }
   }
 
@@ -1133,15 +1136,7 @@ export class Store {
   }
 
   activePath(threadId: string): Message[] {
-    const t = this.thread(threadId);
-    const byId = new Map(t.messages.map((m) => [m.id, m]));
-    const path: Message[] = [];
-    let cur = t.activeLeafId ? byId.get(t.activeLeafId) : undefined;
-    while (cur) {
-      path.push(cur);
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
-    }
-    return path.reverse();
+    return activePathOf(this.thread(threadId));
   }
 
   markTerminalAssistantMessage(threadId: string, turnId: string): Message | null {

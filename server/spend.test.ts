@@ -93,6 +93,28 @@ describe("spend against a monthly cap", () => {
     expect(monthToDateSpend(dataDir, now)).toBeCloseTo(0.5, 9);
   });
 
+  it("adds only the rows the ledger gained on later reads, and starts over when the ledger is rewritten", async () => {
+    const file = join(dataDir, "usage", "2026-09.jsonl");
+    const at = (seconds: number) => new Date(now.getTime() + seconds * 1000);
+    await appendUsage(dataDir, row("2026-09-02T00:00:00.000Z", 1));
+    await appendUsage(dataDir, row(at(40).toISOString(), 4));
+    expect(monthToDateSpend(dataDir, now)).toBeCloseTo(1, 9);
+    await appendUsage(dataDir, row("2026-09-03T00:00:00.000Z", 2));
+    const booked = row(at(10).toISOString(), 0.5);
+    noteSpend(dataDir, booked, appendUsage(dataDir, booked));
+    await flushUsageLedger(dataDir);
+    await Promise.resolve();
+    expect(monthToDateSpend(dataDir, at(10))).toBeCloseTo(1.5, 9);
+    expect(monthToDateSpend(dataDir, at(20))).toBeCloseTo(3.5, 9);
+    expect(monthToDateSpend(dataDir, at(41))).toBeCloseTo(7.5, 9);
+    writeFileSync(file, `${JSON.stringify(row("2026-09-04T00:00:00.000Z", 0.75))}\n`);
+    expect(monthToDateSpend(dataDir, at(60))).toBeCloseTo(0.75, 9);
+    rmSync(file);
+    expect(monthToDateSpend(dataDir, at(80))).toBe(0);
+    await appendUsage(dataDir, row("2026-09-05T00:00:00.000Z", 0.2));
+    expect(monthToDateSpend(dataDir, at(100))).toBeCloseTo(0.2, 9);
+  });
+
   it("counts estimated costs against the cap exactly like reported ones", async () => {
     appendUsage(dataDir, row("2026-09-02T00:00:00.000Z", 3));
     appendUsage(dataDir, { ...row("2026-09-03T00:00:00.000Z", 6), driverKind: "codex", model: "gpt-5.5", costSource: "estimated" });

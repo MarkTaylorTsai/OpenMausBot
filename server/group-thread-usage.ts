@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { AppendedLines } from "./appended-lines.ts";
 import type { GroupThreadUsage } from "../shared/wire.ts";
 
 type Row = { at: string; threadId: string; botId: string; botName?: string; input: number; output: number; cachedInput?: number; costUsd?: number | null };
@@ -25,8 +26,10 @@ function addRow(totals: Map<string, Summary>, row: Row) {
   totals.set(row.threadId, summary);
 }
 
+type MonthFile = { stamp: string; totals: Map<string, Summary>; lines: AppendedLines };
+
 export class GroupUsageReader {
-  private files = new Map<string, { stamp: string; totals: Map<string, Summary> }>();
+  private files = new Map<string, MonthFile>();
   private signature = "";
   private totals = new Map<string, GroupThreadUsage>();
   private dataDir: string;
@@ -46,15 +49,17 @@ export class GroupUsageReader {
     });
     const signature = JSON.stringify(files);
     if (signature !== this.signature) {
-      const next = new Map<string, { stamp: string; totals: Map<string, Summary> }>();
+      const next = new Map<string, MonthFile>();
       for (const { name, stamp } of files) {
         let entry = this.files.get(name);
         if (entry?.stamp !== stamp) {
-          const totals = new Map<string, Summary>();
-          for (const line of readFileSync(join(dir, name), "utf8").split("\n")) {
+          const lines = entry?.lines ?? new AppendedLines(join(dir, name));
+          const { restart, text } = lines.read();
+          const totals = entry && !restart ? entry.totals : new Map<string, Summary>();
+          for (const line of text.split("\n")) {
             try { const row = JSON.parse(line); if (valid(row)) addRow(totals, row); } catch {}
           }
-          entry = { stamp, totals };
+          entry = { stamp, totals, lines };
         }
         next.set(name, entry);
       }

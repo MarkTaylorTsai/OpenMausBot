@@ -6,6 +6,30 @@ export interface ThreadState {
   activeLeafId: string | null;
 }
 
+/** The messages from the first down to the active leaf. A parent is almost always stored before its child, so one pass
+ * from the end finds the whole chain; a message inserted after its children were stored takes the indexed walk. */
+export function activePathOf(state: ThreadState): Message[] {
+  const { messages } = state;
+  const path: Message[] = [];
+  let want = state.activeLeafId;
+  for (let i = messages.length - 1; i >= 0 && want; i -= 1) {
+    const message = messages[i]!;
+    if (message.id !== want) continue;
+    path.push(message);
+    want = message.parentId ?? null;
+  }
+  const missing = want;
+  if (!missing || !messages.some((message) => message.id === missing)) return path.reverse();
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  path.length = 0;
+  let cur = state.activeLeafId ? byId.get(state.activeLeafId) : undefined;
+  while (cur) {
+    path.push(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return path.reverse();
+}
+
 /** A conversation nobody read or wrote for this long gives its parsed transcript back; the next read reloads it from messages.db. */
 export const THREAD_IDLE_MS = 10 * 60_000;
 const SWEEP_EVERY_MS = 60_000;

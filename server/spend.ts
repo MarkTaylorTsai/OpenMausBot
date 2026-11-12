@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig } from "./config.ts";
 import { entitled } from "./enterprise.ts";
-import { readUsage, usageRowKey } from "./usage-ledger.ts";
+import { AppendedLines } from "./appended-lines.ts";
+import { isUsageRow, usageRowKey } from "./usage-ledger.ts";
 
 export interface SpendState {
   month: string;
@@ -17,7 +18,18 @@ export interface SpendState {
 
 const DEFAULT_WARN_AT_PERCENT = 80;
 const CACHE_MS = 15_000;
-const cache = new Map<string, { at: number; month: string; fileUsd: number; keys: Set<string> }>();
+interface MonthRead {
+  at: number;
+  month: string;
+  fileUsd: number;
+  keys: Set<string>;
+  lines: AppendedLines;
+  /** Rows dated after the read that found them: they count once the clock reaches them. */
+  later: { at: number; key: string; costUsd: number }[];
+  /** Rows that landed after the last read, which the next read finds in the file. */
+  early: Map<string, number>;
+}
+const cache = new Map<string, MonthRead>();
 // Rows whose async ledger append may not have landed yet: a long turn would otherwise re-read the month without its own row.
 const unwritten = new Map<string, Map<string, { month: string; costUsd: number }>>();
 
@@ -31,16 +43,46 @@ export function monthToDateSpend(dataDir: string, now = new Date()): number {
   const month = monthOf(now);
   let read = cache.get(dataDir);
   if (!read || read.month !== month || now.getTime() - read.at >= CACHE_MS) {
-    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const rows = readUsage(dataDir, { from, to: now });
-    read = { at: now.getTime(), month, fileUsd: rows.reduce((sum, row) => sum + costOf(row.costUsd), 0), keys: new Set(rows.map(usageRowKey)) };
+    read = readMonth(dataDir, month, now, read?.month === month ? read : undefined);
     cache.set(dataDir, read);
   }
   let pending = 0;
+  for (const costUsd of read.early.values()) pending += costUsd;
   for (const [key, entry] of unwritten.get(dataDir) ?? []) {
-    if (entry.month === month && !read.keys.has(key)) pending += entry.costUsd;
+    if (entry.month === month && !read.keys.has(key) && !read.early.has(key)) pending += entry.costUsd;
   }
   return read.fileUsd + pending;
+}
+
+function readMonth(dataDir: string, month: string, now: Date, previous: MonthRead | undefined): MonthRead {
+  const lines = previous?.lines ?? new AppendedLines(join(dataDir, "usage", `${month}.jsonl`));
+  let added: { restart: boolean; text: string };
+  try {
+    added = lines.read();
+  } catch {
+    return { at: now.getTime(), month, fileUsd: 0, keys: new Set(), lines: new AppendedLines(join(dataDir, "usage", `${month}.jsonl`)), later: [], early: new Map() };
+  }
+  const kept = previous && !added.restart ? previous : undefined;
+  const read: MonthRead = { at: now.getTime(), month, fileUsd: kept?.fileUsd ?? 0, keys: kept?.keys ?? new Set(), lines, later: [], early: new Map() };
+  const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  const to = now.getTime();
+  const count = (row: { at: number; key: string; costUsd: number }) => {
+    if (row.at > to) read.later.push(row);
+    else if (row.at >= from) {
+      read.fileUsd += row.costUsd;
+      read.keys.add(row.key);
+    }
+  };
+  for (const row of kept?.later ?? []) count(row);
+  for (const line of added.text.split("\n")) {
+    if (!line) continue;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (isUsageRow(value)) count({ at: Date.parse(value.at), key: usageRowKey(value), costUsd: costOf(value.costUsd) });
+    } catch {
+    }
+  }
+  return read;
 }
 
 export function noteSpend(
@@ -59,10 +101,7 @@ export function noteSpend(
     entries.delete(key);
     if (entries.size === 0 && unwritten.get(dataDir) === entries) unwritten.delete(dataDir);
     const read = cache.get(dataDir);
-    if (landed && read && read.month === month && !read.keys.has(key)) {
-      read.fileUsd += costUsd;
-      read.keys.add(key);
-    }
+    if (landed && read && read.month === month && !read.keys.has(key)) read.early.set(key, costUsd);
   });
 }
 

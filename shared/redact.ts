@@ -38,6 +38,7 @@ const KEY_PREFIXES: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, // jwt
 ];
 const KEY_PREFIX_TESTS = KEY_PREFIXES.map((re) => new RegExp(re.source));
+const ANY_KEY_PREFIX = new RegExp(KEY_PREFIXES.map((re) => `(?:${re.source})`).join("|"));
 const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 
 /** Only shapes that are unmistakably a credential (a provider's key prefix, a private key block), never a name or a
@@ -53,12 +54,15 @@ const PEM_BLOCK = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z 
 /** key=value / key: value / key="value" where the key is secret-shaped.
  * The value must be a single token of some length; prose after a colon
  * ("password: leave blank…") has spaces and does not match. */
-const KEY_VALUE =
-  /\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)(["']?\s*[=:]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})\3/gi;
+const SECRET_NAME = String.raw`(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?`;
+const KEY_VALUE = new RegExp(String.raw`\b((?:[A-Za-z0-9_-]*_)?${SECRET_NAME})(["']?\s*[=:]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})\3`, "gi");
+/** Each `*_HINT` is a piece every match of its pattern must contain, so text without it is left to skip that pass. */
+const KEY_VALUE_HINT = new RegExp(String.raw`${SECRET_NAME}["']?\s*[=:]`, "i");
 /** `X_KEY=value`, `xai-key=value`: an assignment to a name that ENDS in key
  * is a credential whatever the value looks like, so no length floor. The
  * separator before `key` is what keeps `hotkey=` and `keyboard=` out. */
 const KEY_SUFFIX_ASSIGNMENT = /\b([A-Za-z][A-Za-z0-9_-]*[_-]key)s?(=)(["']?)([A-Za-z0-9._~+/=-]+)\3/gi;
+const KEY_SUFFIX_HINT = /[_-]keys?=/i;
 /** `--token abc`, `--password=abc`: the flag names a secret; the value is
  * whatever single token follows, never another flag. */
 const SECRET_FLAG = /(--(?:token|password|passwd|api-key|apikey|secret|access-key|auth-token)(?:=|\s+))(["']?)(?!-)([A-Za-z0-9._~+/=-]+)\2/gi;
@@ -94,13 +98,13 @@ export function redactSecretsInText(text: string): string {
   if (held.length < 8) return held;
   let out = held;
   out = out.replace(PEM_BLOCK, (_m, open: string, body: string, close: string) => `${open}\n${mask(body.trim())}\n${close}`);
-  for (const re of KEY_PREFIXES) out = out.replace(re, (m) => mask(m));
+  if (ANY_KEY_PREFIX.test(out)) for (const re of KEY_PREFIXES) out = out.replace(re, (m) => mask(m));
   out = out.replace(BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`);
   out = out.replace(BASIC_AUTH, (_m, lead: string, creds: string) => `${lead}${mask(creds)}`);
-  out = out.replace(KEY_VALUE, (_m, key: string, sep: string, quote: string, value: string) => `${key}${sep}${quote}${mask(value)}${quote}`);
-  out = out.replace(KEY_SUFFIX_ASSIGNMENT, (_m, key: string, sep: string, quote: string, value: string) => `${key}${sep}${quote}${mask(value)}${quote}`);
+  if (KEY_VALUE_HINT.test(out)) out = out.replace(KEY_VALUE, (_m, key: string, sep: string, quote: string, value: string) => `${key}${sep}${quote}${mask(value)}${quote}`);
+  if (KEY_SUFFIX_HINT.test(out)) out = out.replace(KEY_SUFFIX_ASSIGNMENT, (_m, key: string, sep: string, quote: string, value: string) => `${key}${sep}${quote}${mask(value)}${quote}`);
   out = out.replace(SECRET_FLAG, (_m, flag: string, quote: string, value: string) => `${flag}${quote}${mask(value)}${quote}`);
-  out = out.replace(URL_USERINFO, (_m, lead: string, secret: string, at: string) => `${lead}${mask(secret)}${at}`);
+  if (out.includes("://")) out = out.replace(URL_USERINFO, (_m, lead: string, secret: string, at: string) => `${lead}${mask(secret)}${at}`);
   return out;
 }
 

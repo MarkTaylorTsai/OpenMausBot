@@ -2,7 +2,7 @@
 // long one is doing (its last output, or what its processes show), and a running command's last lines of output.
 import { stripVTControlCharacters } from "node:util";
 
-import { classifyQuiet, quietNoticeMs, quietTickMs, sampleProcessTree, type ProcessSample } from "../drivers/acp/quiet-status.ts";
+import { classifyQuiet, quietNoticeMs, quietTickMs, sampleGapMs, sampleProcessTree, type ProcessSample } from "../drivers/acp/quiet-status.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolStep } from "../step-summary.ts";
 import { newId, type RuntimeEvent } from "../contracts.ts";
@@ -207,7 +207,7 @@ export class LiveSteps {
     try {
       const sample = await (this.opts.sample ?? sampleProcessTree)(pid, call.startedAt);
       const previous = call.sample;
-      const sinceMs = previous ? now - call.sampledAt : 0;
+      const sinceMs = previous ? sampleGapMs(sample, previous, now - call.sampledAt) : 0;
       call.sample = sample;
       call.sampledAt = now;
       return quietOf(call, previous, sinceMs, sample);

@@ -5,7 +5,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { Store } from "./store.ts";
-import { THREAD_IDLE_MS } from "./thread-cache.ts";
+import { activePathOf, THREAD_IDLE_MS } from "./thread-cache.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -98,5 +98,59 @@ describe("Store message cache", () => {
       new Store(selection).messagesFor(bot.threadId).map((message) => message.text),
     );
     expect(store.activeLeaf(bot.threadId)).toBe(added.id);
+  });
+});
+
+describe("activePathOf", () => {
+  type Row = Parameters<typeof activePathOf>[0]["messages"][number];
+  const row = (id: string, parentId: string | null | undefined): Row => ({ id, parentId, at: 0, role: "user", kind: "text", text: id }) as Row;
+  const indexedWalk = (messages: Row[], activeLeafId: string | null) => {
+    const byId = new Map(messages.map((m) => [m.id, m]));
+    const path: Row[] = [];
+    let cur = activeLeafId ? byId.get(activeLeafId) : undefined;
+    while (cur) {
+      path.push(cur);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    return path.reverse();
+  };
+  const ids = (messages: Row[]) => messages.map((m) => m.id);
+
+  it("follows the active branch, past sibling branches", () => {
+    const messages = [row("a", null), row("b", "a"), row("c", "b"), row("b2", "a"), row("c2", "b2")];
+    expect(ids(activePathOf({ messages, activeLeafId: "c2" }))).toEqual(["a", "b2", "c2"]);
+    expect(ids(activePathOf({ messages, activeLeafId: "c" }))).toEqual(["a", "b", "c"]);
+    expect(activePathOf({ messages, activeLeafId: null })).toEqual([]);
+    expect(activePathOf({ messages, activeLeafId: "gone" })).toEqual([]);
+    expect(activePathOf({ messages: [], activeLeafId: "a" })).toEqual([]);
+  });
+
+  it("follows a message stored after the children it was inserted above", () => {
+    const messages = [row("a", null), row("b", "a"), row("d", "c"), row("e", "d"), row("c", "b")];
+    expect(ids(activePathOf({ messages, activeLeafId: "e" }))).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("stops where a page of the conversation starts", () => {
+    const messages = [row("m8", "m7"), row("m9", "m8"), row("m10", "m9")];
+    expect(ids(activePathOf({ messages, activeLeafId: "m10" }))).toEqual(["m8", "m9", "m10"]);
+  });
+
+  it("gives the indexed walk's path for any acyclic conversation, in any stored order", () => {
+    let seed = 7;
+    const rand = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let round = 0; round < 300; round += 1) {
+      const messages: Row[] = [];
+      const size = 1 + rand(40);
+      for (let i = 0; i < size; i += 1) {
+        const pick = rand(10);
+        messages.push(row(`m${i}`, i === 0 || pick === 0 ? null : pick === 1 ? "elsewhere" : pick < 6 ? `m${i - 1}` : `m${rand(i)}`));
+      }
+      for (let swaps = rand(4); swaps > 0; swaps -= 1) {
+        const a = rand(size), b = rand(size);
+        [messages[a], messages[b]] = [messages[b]!, messages[a]!];
+      }
+      const activeLeafId = `m${rand(size)}`;
+      expect(activePathOf({ messages, activeLeafId })).toEqual(indexedWalk(messages, activeLeafId));
+    }
   });
 });

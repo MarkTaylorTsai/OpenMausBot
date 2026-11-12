@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../../testing/cleanup.ts";
 import {
-  classifyQuiet, describeQuiet, LogTail, parseOpenCodeLogLine, parseQwenLogLine, quietKey, sampleLinuxProc, sampleProcessTree, startedSince, treePids,
-  quietVerdict, waitingOutLimit, type ProcReader,
+  classifyQuiet, describeQuiet, LogTail, parseOpenCodeLogLine, parseQwenLogLine, parseWindowsSnapshot, quietKey, sampleGapMs, sampleLinuxProc, sampleProcessTree,
+  sampleWindowsSnapshot, sharedReading, startedSince, treePids, quietVerdict, waitingOutLimit, type ProcReader,
 } from "./quiet-status.ts";
 import { qwenDebugLogPath } from "./qwen.ts";
 
@@ -147,6 +147,75 @@ describe("process probe", () => {
   it("walks a process tree", () => {
     expect(treePids([{ pid: 2, ppid: 1 }, { pid: 3, ppid: 2 }, { pid: 4, ppid: 9 }], 1)).toEqual([1, 2, 3]);
   });
+
+  it("walks a deep and a wide tree once each, in breadth-first order, and stops at 512 processes", () => {
+    const chain = Array.from({ length: 300 }, (_, i) => ({ pid: i + 2, ppid: i + 1 }));
+    expect(treePids(chain, 1)).toEqual(Array.from({ length: 301 }, (_, i) => i + 1));
+    const wide = Array.from({ length: 5_000 }, (_, i) => ({ pid: i + 2, ppid: 1 }));
+    expect(treePids(wide, 1)).toEqual(Array.from({ length: 512 }, (_, i) => i + 1));
+    expect(treePids([{ pid: 1, ppid: 2 }, { pid: 2, ppid: 1 }, { pid: 3, ppid: 1 }], 1)).toEqual([1, 2, 3]);
+  });
+
+  it("reads the process table once for every caller within the sampling period", async () => {
+    let clock = 0, taken = 0;
+    let finish: (value: number) => void = () => {};
+    const read = sharedReading(() => { taken += 1; return new Promise<number>((resolve) => { finish = resolve; }); }, () => 13_500, () => clock);
+    const first = read(), second = read();
+    expect(taken).toBe(1);
+    finish(7);
+    expect(await Promise.all([first, second])).toEqual([7, 7]);
+    clock = 13_499;
+    expect(await read()).toBe(7);
+    expect(taken).toBe(1);
+    clock = 13_500;
+    void read();
+    void read();
+    expect(taken).toBe(2);
+  });
+
+  it("samples any number of Windows process trees from one table", () => {
+    const text = [
+      "P 0 0 65305919375000 0 1793951634114",
+      "P 100 4 20000 10000 1000",
+      "P 101 100 50000 0 59000\r",
+      "P 102 101 10000 0 61000",
+      "P 103 100 70000 0 ",
+      "P 200 4 990000 0 61000",
+      "P 201 200 10000 0 61000",
+      "C 101", "C 102", "C 102", "C 200", "C ", "garbage",
+    ].join("\n");
+    const snapshot = parseWindowsSnapshot(text, 5_000)!;
+    expect(snapshot.rows).toHaveLength(7);
+    expect(snapshot.rows[2]).toEqual({ pid: 101, ppid: 100, cpuMs: 5, startedAt: 59_000 });
+    expect(snapshot.rows[4]!.startedAt).toBeNull();
+    expect(sampleWindowsSnapshot(snapshot, 100)).toEqual({ cpuMs: 16, connections: 3, at: 5_000 });
+    expect(sampleWindowsSnapshot(snapshot, 200)).toEqual({ cpuMs: 100, connections: 1, at: 5_000 });
+    expect(sampleWindowsSnapshot(snapshot, 100, 60_000), "only what started since, within the start slack, and never the root").toEqual({ cpuMs: 6, connections: 3, at: 5_000 });
+    expect(sampleWindowsSnapshot(snapshot, 100, 90_000)).toEqual({ cpuMs: null, connections: null });
+    expect(sampleWindowsSnapshot(snapshot, 999), "a root that has exited holds nothing").toEqual({ cpuMs: 0, connections: 0, at: 5_000 });
+    expect(parseWindowsSnapshot("", 5_000), "no table reads as unknown, never as idle").toBeNull();
+    expect(sampleWindowsSnapshot(null, 100)).toEqual({ cpuMs: null, connections: null });
+  });
+
+  it("measures CPU use over the time between the two readings, and reads nothing from one reading seen twice", () => {
+    const earlier = { cpuMs: 1_000, connections: 0, at: 10_000 }, later = { cpuMs: 1_400, connections: 0, at: 12_000 };
+    expect(sampleGapMs(later, earlier, 15_000)).toBe(2_000);
+    expect(sampleGapMs({ cpuMs: 1, connections: 0 }, earlier, 15_000)).toBe(15_000);
+    expect(classifyQuiet({ logged: null, context: null, sample: later, previous: earlier, sinceMs: sampleGapMs(later, earlier, 15_000) }).kind).toBe("busy");
+    expect(classifyQuiet({ logged: null, context: null, sample: earlier, previous: earlier, sinceMs: sampleGapMs(earlier, earlier, 15_000) }).kind).toBe("unknown");
+  });
+
+  it.runIf(process.platform === "win32")("samples this process on Windows, two callers at once from the same reading", async () => {
+    const [whole, again, own] = await Promise.all([sampleProcessTree(process.pid), sampleProcessTree(process.pid), sampleProcessTree(process.pid, Date.now() + 60_000)]);
+    expect(again).toEqual(whole);
+    expect(own).toEqual({ cpuMs: null, connections: null });
+    expect(await sampleProcessTree(process.pid)).toEqual(whole);
+    // PowerShell can take longer than the probe waits on a loaded machine: that reads as unknown.
+    if (whole.cpuMs === null) return;
+    expect(whole.cpuMs).toBeGreaterThan(0);
+    expect(whole.connections).toBeGreaterThanOrEqual(0);
+    expect(whole.at).toBeTypeOf("number");
+  }, 30_000);
 
   it("counts only what a tool call started: never the engine itself, nor the tool servers it started before", () => {
     const rows = [

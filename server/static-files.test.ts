@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { serveStatic } from "./static-files.ts";
+
+vi.mock("node:fs", { spy: true });
 
 const dir = mkdtempSync(join(tmpdir(), "omb-static-"));
 writeFileSync(join(dir, "index.html"), "app");
@@ -34,5 +36,31 @@ describe("serveStatic", () => {
     expect(get("/settings").body).toBe("app");
     expect(get("/rail/more").body).toBe("app");
     expect(get("/assets/rail-1a2b.js").headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+  });
+
+  it("reads a file once for any number of requests, and again when it changes or comes back", () => {
+    const file = join(dir, "assets", "page-9f.js");
+    const reads = () => vi.mocked(readFileSync).mock.calls.filter(([path]) => path === file).length;
+    writeFileSync(file, "one");
+    const first = get("/assets/page-9f.js");
+    expect(get("/assets/page-9f.js")).toEqual(first);
+    expect(first).toMatchObject({ served: true, status: 200, body: "one", headers: { "content-type": "text/javascript", "cache-control": "public, max-age=31536000, immutable" } });
+    expect(reads()).toBe(1);
+
+    writeFileSync(file, "three");
+    expect(get("/assets/page-9f.js").body).toBe("three");
+    writeFileSync(file, "seven");
+    utimesSync(file, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    expect(get("/assets/page-9f.js").body, "the same size with another modification time").toBe("seven");
+    expect(get("/assets/page-9f.js").body).toBe("seven");
+    expect(reads()).toBe(3);
+
+    rmSync(file);
+    expect(get("/assets/page-9f.js")).toMatchObject({ body: "app", headers: { "content-type": "text/html", "cache-control": "no-cache" } });
+    writeFileSync(file, "seven");
+    utimesSync(file, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    expect(get("/assets/page-9f.js").body).toBe("seven");
+    expect(get("/assets", dir)).toMatchObject({ body: "app", headers: { "cache-control": "no-cache" } });
+    expect(get("/x", join(dir, "missing")).served).toBe(false);
   });
 });
