@@ -475,3 +475,42 @@ describe("a browser on Windows", () => {
     }
   }, 60_000);
 });
+
+describe("a kept browser on Windows, between a person's keys", () => {
+  const platform = process.platform;
+  afterEach(() => { Object.defineProperty(process, "platform", { value: platform, configurable: true }); vi.useRealTimers(); });
+
+  it("asks tasklist about its daemon again only after ten seconds, and lists afresh once another program has its pid", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omb-win-vouch-"));
+    homes.push(root);
+    const dir = join(root, "Profile");
+    mkdirSync(join(dir, "lockfile"), { recursive: true });
+    const commands: string[] = [];
+    let image = "agent-browser.exe";
+    vi.mocked(execFile).mockImplementation(((file: string, _args: string[], _options: unknown, done: (error: Error | null, stdout: string) => void) => {
+      commands.push(file);
+      const stdout = file === "tasklist" ? `"${image}","${process.pid}","Console","1","12,345 K"\r\n` : file === "powershell.exe" ? JSON.stringify([{
+        ProcessId: process.pid, ParentProcessId: process.pid, CommandLine: `"C:/Chrome/chrome.exe" "--user-data-dir=${dir}" --remote-debugging-port=0`,
+        Name: "chrome.exe", Started: "2026-11-03T09:00:00.0000000Z", ParentName: "agent-browser.exe", ParentStarted: "2026-11-03T08:59:59.0000000Z",
+      }]) : "";
+      queueMicrotask(() => done(null, stdout));
+      return {} as ChildProcess;
+    }) as unknown as typeof execFile);
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await releaseBrowserProfile(dir);
+    for (let key = 0; key < 5; key++) await releaseBrowserProfile(dir);
+    expect(commands).toEqual(["powershell.exe"]);
+    vi.setSystemTime(Date.now() + 10_001);
+    await releaseBrowserProfile(dir);
+    await releaseBrowserProfile(dir);
+    expect(commands).toEqual(["powershell.exe", "tasklist"]);
+    image = "notepad.exe";
+    vi.setSystemTime(Date.now() + 10_001);
+    await releaseBrowserProfile(dir);
+    await vi.waitFor(() => expect(commands).toHaveLength(3));
+    await new Promise((resolve) => setImmediate(resolve));
+    await releaseBrowserProfile(dir);
+    expect(commands.slice(3)).toEqual(["powershell.exe"]);
+  });
+});

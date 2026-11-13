@@ -250,7 +250,11 @@ function lockReleased(lock: string): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
 }
 
-const heldWindowsProfiles = new Map<string, { browser: number; daemon: number; image: string; shell?: number }>();
+const heldWindowsProfiles = new Map<string, { browser: number; daemon: number; image: string; shell?: number; vouchedAt: number; vouching?: boolean }>();
+/** tasklist takes a quarter of a second or more, and this check runs before every key and click a person sends the browser.
+ * A pid that still answers is taken to be the process tasklist last named there; past this age tasklist is asked again
+ * without holding the caller, and an answer that names another program drops the entry for the next call to list afresh. */
+const HELD_VOUCH_MS = 10_000;
 
 /** Windows Chrome keeps `lockfile` in its profile open and undeletable while it runs. One whose daemon was killed keeps running
  * and makes every later launch on the profile exit with code 21 (profile in use), even after the app restarts, so it is
@@ -261,7 +265,22 @@ async function releaseWindowsProfile(dir: string, binaryPath?: string, chromePat
   if (lockReleased(lock)) { heldWindowsProfiles.delete(dir); return; }
   // The Chrome kept last time still runs under the same daemon: every process is not listed again on each turn.
   const held = heldWindowsProfiles.get(dir);
-  if (held && processAlive(held.browser) && await imageOf(held.daemon) === held.image && (held.shell === undefined || await imageOf(held.shell) === "cmd.exe")) return;
+  if (held && processAlive(held.browser)) {
+    const answers = processAlive(held.daemon) && (held.shell === undefined || processAlive(held.shell));
+    const vouch = async () => await imageOf(held.daemon) === held.image && (held.shell === undefined || await imageOf(held.shell) === "cmd.exe");
+    if (answers) {
+      if (Date.now() - held.vouchedAt >= HELD_VOUCH_MS && !held.vouching) {
+        held.vouching = true;
+        void vouch().then((same) => {
+          held.vouching = false;
+          if (same) held.vouchedAt = Date.now();
+          else if (heldWindowsProfiles.get(dir) === held) heldWindowsProfiles.delete(dir);
+        }, () => { held.vouching = false; });
+      }
+      return;
+    }
+    if (await vouch()) { held.vouchedAt = Date.now(); return; }
+  }
   heldWindowsProfiles.delete(dir);
   const listing = await execText("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROFILE_BROWSERS], { OMB_BROWSER_PROFILE: dir }, 15_000);
   let rows: unknown;
@@ -292,7 +311,7 @@ async function releaseWindowsProfile(dir: string, binaryPath?: string, chromePat
   });
   for (const { pid, started, daemonPid, shell, daemon } of browsers) {
     if (daemon.startsWith("agent-browser") || (binaryPath && daemon === win32.basename(binaryPath).toLowerCase())) {
-      heldWindowsProfiles.set(dir, { browser: pid, daemon: daemonPid, image: daemon, shell });
+      heldWindowsProfiles.set(dir, { browser: pid, daemon: daemonPid, image: daemon, shell, vouchedAt: Date.now() });
       return;
     }
     // Between the listing and now the pid may have gone to another program: only the same Chrome is stopped.
