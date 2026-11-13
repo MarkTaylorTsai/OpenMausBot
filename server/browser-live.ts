@@ -34,6 +34,7 @@ const FRAME_WINDOW = 2;
 /** Inputs one request may carry, so a remote panel's typing does not wait a round trip per key. */
 export const INPUT_BATCH_LIMIT = 64;
 const ENDED_PROBE = { timeoutMs: 5_000, maxBytes: 65_536 };
+const TAB_SYNC = { timeoutMs: 2_000, maxBytes: 262_144 };
 /** What a view hears when its browser closed unused: it stops, where reconnecting would start the browser again. */
 export const BROWSER_ASLEEP_ERROR = { type: "error", retryable: false, asleep: true, message: "This browser closed after it sat unused, to save memory. Reconnect to open it again." };
 /** What a view hears while its browser cannot show it yet; it keeps waiting. */
@@ -270,6 +271,7 @@ interface Viewer extends OpenOptions {
   closed: boolean;
   blocked: boolean;
   heartbeat?: NodeJS.Timeout;
+  syncingTabs?: boolean;
   drainTimer?: NodeJS.Timeout;
   /** A frame upstream still waits on: acknowledged once the view has fewer than FRAME_WINDOW frames on their way. */
   frameSeq?: number;
@@ -767,6 +769,24 @@ export class BrowserLive {
     finally { viewer.restarting = false; if (viewer.closed) this.runtime.release(viewer.session, viewer.person); this.control(viewer.session); }
   }
 
+  /** agent-browser (0.36) learns that a page closed itself (a sign-in popup, window.close) only at its next command, so the
+   * view kept a tab that was gone. Reading the tab list makes it send the current one. Only while Chrome is connected, since
+   * a command would start a stopped one, and never behind a bot's or a person's own action, where it would queue. */
+  private async syncTabs(viewer: Viewer): Promise<void> {
+    const port = viewer.port;
+    // A person's hold with nothing running leaves the engine free; any other work in the session does not.
+    const free = () => !viewer.pendingActions && (!this.runtime.working(viewer.session) || this.runtime.canControl(viewer.session, viewer.person));
+    if (!port || viewer.syncingTabs || viewer.restarting || !free()) return;
+    viewer.syncingTabs = true;
+    try {
+      const status = await relay(port, { action: "stream_status" }, TAB_SYNC);
+      if (status.success && status.data?.connected === true && this.current(viewer) && free()) {
+        await relay(port, { action: "tab_list" }, TAB_SYNC);
+      }
+    } catch {
+    } finally { viewer.syncingTabs = false; }
+  }
+
   /** The daemon runs one command per session at a time, so an answer to a read sent after an unanswered command proves it ended. */
   private ended(port: number): Promise<boolean> {
     return relay(port, { action: "stream_status" }, ENDED_PROBE).then((answer) => answer.success, () => false);
@@ -832,6 +852,7 @@ export class BrowserLive {
         if (!this.current(viewer) || (oldest !== undefined && Date.now() - oldest > 2 * HEARTBEAT_MS)) { this.close(viewer, true, true); return; }
         this.control(viewer.session);
         this.send(viewer, { type: "heartbeat" });
+        void this.syncTabs(viewer);
       }, HEARTBEAT_MS);
       viewer.heartbeat.unref();
     } catch (error) {
