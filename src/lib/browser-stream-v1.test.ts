@@ -487,6 +487,23 @@ describe("the v1 input queue", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("keeps typing after a toolbar action fails, and stops it after a key fails", async () => {
+    const send = vi.fn<(body: Record<string, unknown>) => Promise<void>>().mockResolvedValue();
+    const onError = vi.fn();
+    const queue = createLiveInputQueue(send, onError);
+    send.mockRejectedValueOnce(new Error("Tab t2 not found"));
+    queue.enqueue({ type: "tab-close", tabId: "t2" }); await queue.settle();
+    expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: "Tab t2 not found" }));
+    expect(queue.stopped()).toBe(false);
+    queue.enqueue(key("keyDown", "a")); await queue.settle();
+    expect(send).toHaveBeenLastCalledWith(key("keyDown", "a"));
+    send.mockRejectedValueOnce(new Error("lost"));
+    queue.enqueue(key("keyDown", "b")); await queue.settle();
+    expect(queue.stopped()).toBe(true);
+    queue.enqueue(key("keyDown", "c")); await queue.settle();
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
   it("halts overflowing presses while keeping releases and toolbar actions", async () => {
     const first = deferred();
     const send = vi.fn<(body: Record<string, unknown>) => Promise<void>>().mockResolvedValue();

@@ -118,7 +118,10 @@ export function createLiveInputQueue(send: (body: Body) => Promise<unknown>, onE
           if (current !== generation) continue;
           // The server stops a batch at its first failure, so its later releases may never have been sent.
           if (taken.length > 1) queue.unshift(...taken.slice(1).filter(releases));
-          halt(cause);
+          // A toolbar action that failed (a tab already gone, an address that did not open) sent no key or click that
+          // could be lost or left held, so typing carries on.
+          if (batchable(taken[0]!)) halt(cause);
+          else onError(cause);
         }
       }
     })().finally(() => { active = null; run(); });
