@@ -7200,6 +7200,8 @@
   "templates.search": "搜尋範本",
   "templates.searchResults": "搜尋結果",
   "templates.communityTemplates": "社群範本",
+  "templates.grokMarketplace": "Grok Bot 市集 · {count} 個機器人",
+  "templates.grokSynced": "每日同步，上次 {time}",
   "templates.loading": "正在載入範本…",
   "templates.loadingShort": "載入中",
   "templates.load": "載入",

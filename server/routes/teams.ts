@@ -6,7 +6,7 @@ import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from 
 import { isBotPackage, packageSummary, parsePackageDocument, renderBotPackageMarkdown, type PackageDocument } from "../bot-package.ts";
 import { parseVisibility } from "../bot-visibility.ts";
 import { teamCreator } from "../new-bot-sharing.ts";
-import type { AppConfig } from "../config.ts";
+import { DATA_DIR, type AppConfig } from "../config.ts";
 import type { ModelSelection } from "../contracts.ts";
 import type { OrgLibrary } from "../org-library.ts";
 import {
@@ -31,7 +31,8 @@ import type { Routine, RoutineManager } from "../routines.ts";
 import { readSectionContext } from "../section-context.ts";
 import { sectionKey, type BotRecord, type GroupRecord, type Store } from "../store.ts";
 import { createTeamBackup, importTeamBackup } from "../team-backup.ts";
-import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "../team-library.ts";
+import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog, TEAM_LIBRARY_REPOSITORY } from "../team-library.ts";
+import { grokCatalogEntries, grokLibraryTeam, readGrokMarketplace } from "../grok-marketplace.ts";
 import { createTeamManifest, parseTeamManifest } from "../team-manifest.ts";
 import type { RequestAuth } from "../request-auth.ts";
 import { userErrorFields } from "../user-errors.ts";
@@ -207,14 +208,21 @@ export function createTeamRoutes(deps: TeamRouteDeps): RouteHandler {
       }
     }
     if (method === "GET" && path === "/api/team-library/catalog") {
+      // The local copy of the Grok Bot Marketplace rides along, and still shows when GitHub cannot be reached.
+      const grokCache = readGrokMarketplace(DATA_DIR);
+      const grok = { syncedAt: grokCache.syncedAt, count: grokCache.bots.length, ...(grokCache.lastError ? { error: grokCache.lastError } : {}) };
       try {
-        return json(res, 200, await fetchTeamCatalog());
+        const catalog = await fetchTeamCatalog();
+        return json(res, 200, { ...catalog, teams: [...catalog.teams, ...grokCatalogEntries(grokCache)], grok });
       } catch (error) {
+        if (grokCache.bots.length) return json(res, 200, { format: "openmaus.catalog", version: 1, repositoryUrl: TEAM_LIBRARY_REPOSITORY, teams: grokCatalogEntries(grokCache), grok });
         return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
       }
     }
     m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
     if (m && method === "GET") {
+      const grokPackage = grokLibraryTeam(DATA_DIR, m[1]!);
+      if (grokPackage) return json(res, 200, grokPackage);
       try {
         return json(res, 200, await fetchLibraryTeam(m[1]));
       } catch (error) {

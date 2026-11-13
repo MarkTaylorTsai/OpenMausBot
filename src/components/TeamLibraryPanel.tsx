@@ -10,7 +10,7 @@ import { api, useStore, type Bot, type Group } from "@/state/store";
 import { ArrowLeft, Check, Compass, ExternalLink, FolderOpen, Github, Loader2, Search, Share2, UploadCloud, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { catalogCopy, catalogMatches, type TeamCatalog, type TeamCatalogEntry } from "@/lib/team-catalog";
+import { catalogCopy, catalogMatches, isGrokEntry, type TeamCatalog, type TeamCatalogEntry } from "@/lib/team-catalog";
 
 import { TEAM_GLYPHS, TeamImportDetails } from "./TeamImportDetails";
 import { ReadyBotGallery } from "./ReadyBotGallery";
@@ -678,9 +678,16 @@ export function TeamLibraryPanel({
                       <button onClick={() => void loadCatalog()} className="mt-3 rounded-full bg-raised px-3.5 py-2 text-ink hover:bg-raised-hover">{t("common.tryAgain")}</button>
                     </div>
                   )}
-                  {!catalogLoading && catalog && (
+                  {!catalogLoading && catalog && [visibleTeams.filter((entry) => !isGrokEntry(entry)), visibleTeams.filter(isGrokEntry)].map((teams, part) => (part === 1 && teams.length === 0) ? null : (
+                    <div key={part}>
+                      {part === 1 && (
+                        <div className="mb-1 mt-8 text-[12px] font-medium text-ink-secondary">
+                          {t("templates.grokMarketplace", { count: teams.length })}
+                          {catalog.grok?.syncedAt ? ` · ${t("templates.grokSynced", { time: new Date(catalog.grok.syncedAt).toLocaleString() })}` : ""}
+                        </div>
+                      )}
                     <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
-                      {visibleTeams.map((entry, index) => {
+                      {teams.map((entry, index) => {
                         const copy = catalogCopy(entry);
                         return (
                         <article key={entry.slug} className="flex min-h-[104px] items-center gap-3 border-b border-hairline/35 px-1 py-4">
@@ -706,7 +713,8 @@ export function TeamLibraryPanel({
                         );
                       })}
                     </div>
-                  )}
+                    </div>
+                  ))}
                   {!catalogLoading && catalog && visibleTeams.length === 0 && (
                     <div className="flex min-h-56 flex-col items-center justify-center text-center">
                       <div className="text-[14px] font-medium text-ink">{t("templates.noneFound")}</div>

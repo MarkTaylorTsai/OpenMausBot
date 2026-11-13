@@ -7532,6 +7532,8 @@
   "templates.search": "Search templates",
   "templates.searchResults": "Search results",
   "templates.communityTemplates": "Community templates",
+  "templates.grokMarketplace": "Grok Bot Marketplace · {count} bots",
+  "templates.grokSynced": "synced daily, last {time}",
   "templates.loading": "Loading templates…",
   "templates.loadingShort": "Loading",
   "templates.load": "Load",

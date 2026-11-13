@@ -616,7 +616,7 @@ import { viewerTargetId } from "../shared/desktop-viewer.ts";
 import { createComputerPreviews } from "./computer-previews.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { createAntigravityAccountRoutes } from "./routes/antigravity-accounts.ts";
-import { createConfigRoutes } from "./routes/config.ts";
+import { createConfigRoutes } from "./routes/config.ts"; import { startGrokMarketplaceSync } from "./grok-marketplace.ts";
 import { createInstanceRoutes } from "./routes/instances.ts";
 import { createMcpConfig } from "./host/mcp-config.ts";
 import { createMcpServerRoutes } from "./routes/mcp-servers.ts";
@@ -726,7 +726,7 @@ if (CLOUD_HOME) {
 }
 holdIncludedServices(CLOUD_ENV);
 for (const key of CLOUD_HOME_SECRET_KEYS) delete process.env[key];
-await startBotBoxAtBoot({ dataDir: DATA_DIR, port: PORT }); // The bot box (server/bot-box): on a Cloud home every bot turn runs in it, decided before any engine starts.
+await startBotBoxAtBoot({ dataDir: DATA_DIR, port: PORT }); if (!process.env.OMB_CLOUD_ROLE) startGrokMarketplaceSync(DATA_DIR); // Grok Bot Marketplace copy for Templates, daily. The bot box (server/bot-box): on a Cloud home every bot turn runs in it, decided before any engine starts.
 if (CLOUD_HOME && Object.keys(CLOUD_SECRETS).length === 0) {
   console.warn("cloud home: its secrets came in this process's environment, which anything running as the same user can read in /proc; start it with cloud-home-start");
 }

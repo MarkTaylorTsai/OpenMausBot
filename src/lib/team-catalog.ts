@@ -22,7 +22,11 @@ export interface TeamCatalogEntry {
 export interface TeamCatalog {
   repositoryUrl: string;
   teams: TeamCatalogEntry[];
+  /** The daily local copy of the Grok Bot Marketplace, whose entries use `grok-` slugs. */
+  grok?: { syncedAt: number | null; count: number; error?: string };
 }
+
+export const isGrokEntry = (entry: TeamCatalogEntry) => entry.slug.startsWith("grok-");
 
 const CATALOG_COPY: Record<string, string> = {
   "seo growth team": "seoGrowth",

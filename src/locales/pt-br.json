@@ -7202,6 +7202,8 @@
   "templates.search": "Buscar modelos",
   "templates.searchResults": "Resultados da busca",
   "templates.communityTemplates": "Modelos da comunidade",
+  "templates.grokMarketplace": "Grok Bot Marketplace · {count} bots",
+  "templates.grokSynced": "sincronizado diariamente, última vez {time}",
   "templates.loading": "Carregando modelos…",
   "templates.loadingShort": "Carregando",
   "templates.load": "Carregar",
