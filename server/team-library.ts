@@ -24,6 +24,8 @@ export interface TeamCatalogEntry {
   members: number;
   skills: string[];
   requires: { apps: string[] };
+  /** What a ready-bot style card shows for a single bot (the Grok Bot Marketplace copy). */
+  card?: { color: string; creator: string; group: string; description: string; routines: number };
 }
 
 export interface TeamCatalog {

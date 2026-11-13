@@ -36472,7 +36472,19 @@
       "devices.route.httpsAccount": "518ed79b3110cf735bc507bd796cf5c9cd701c3b2dc72bd764e599d411e3baf5",
       "backup.importAction": "ea94509e38cf6d6427db3a1b5a3b5816cba1e8f89b08f9739f6077ade188163c",
       "templates.grokMarketplace": "de5cdf41e180c8a377025e2265718c70032fccb81374a1712e9009594a230f96",
-      "templates.grokSynced": "547570afc02815113ee4a4c3d00e2db8a6490edcf1f056bd7e01c57140b4c81c"
+      "templates.grokSynced": "547570afc02815113ee4a4c3d00e2db8a6490edcf1f056bd7e01c57140b4c81c",
+      "templates.cardDetails": "a29aae76261b45df06b3b7f3dac13d7777fff4e57dbe5c8509be9bee70346e47",
+      "templates.suggestedRoutines": "80ccaf716c011665dc14af52d01af4c48fc39cb779afe20d3e01e56cd77d6743",
+      "templates.grokGroup.engineering": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
+      "templates.grokGroup.sales": "8de4e0ea7370e4e60a521379c9edf3253afcba7660e647f3aa788e49e8993d1a",
+      "templates.grokGroup.marketing": "f5904cf7a1231a7a13a8cffbd2f0482984a1c69e96fc48dd96be8858a1707e60",
+      "templates.grokGroup.design": "0072e6b934945d5ba08f9729e00847391922f2f6026a435e704634fb93bf4502",
+      "templates.grokGroup.personal": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
+      "templates.grokGroup.recruiting": "b6cef17edfa8e4e2c748e705bb5cb89bd07829ed070f3c56c4873caec235ddee",
+      "templates.grokGroup.product": "fb9ef894175c327470f768d95ca7bee65e19853a0eaace3805f8a7b8a12270da",
+      "templates.grokGroup.operations": "358cc201f87d9dc9defd3eac467a62fae720aa99a76be8b98e0fc9b3893a427d",
+      "templates.grokGroup.official": "97ed38fa07cf60f97a69ce096006ca16e66c759b546300c20af93dd4c513be9a",
+      "templates.grokGroup.other": "f97e9da0e3b879f0a9df979ae260a5f7e1371edb127c1862d4f861981166cdc1"
     },
     "zh": {
       "pro.fromPrice": "a48a04a457d60b08b54fc83e7a6c4584ffedb1e23621859084900c8521a3af7b",
@@ -54700,7 +54712,19 @@
       "devices.route.httpsAccount": "518ed79b3110cf735bc507bd796cf5c9cd701c3b2dc72bd764e599d411e3baf5",
       "backup.importAction": "ea94509e38cf6d6427db3a1b5a3b5816cba1e8f89b08f9739f6077ade188163c",
       "templates.grokMarketplace": "de5cdf41e180c8a377025e2265718c70032fccb81374a1712e9009594a230f96",
-      "templates.grokSynced": "547570afc02815113ee4a4c3d00e2db8a6490edcf1f056bd7e01c57140b4c81c"
+      "templates.grokSynced": "547570afc02815113ee4a4c3d00e2db8a6490edcf1f056bd7e01c57140b4c81c",
+      "templates.cardDetails": "a29aae76261b45df06b3b7f3dac13d7777fff4e57dbe5c8509be9bee70346e47",
+      "templates.suggestedRoutines": "80ccaf716c011665dc14af52d01af4c48fc39cb779afe20d3e01e56cd77d6743",
+      "templates.grokGroup.engineering": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
+      "templates.grokGroup.sales": "8de4e0ea7370e4e60a521379c9edf3253afcba7660e647f3aa788e49e8993d1a",
+      "templates.grokGroup.marketing": "f5904cf7a1231a7a13a8cffbd2f0482984a1c69e96fc48dd96be8858a1707e60",
+      "templates.grokGroup.design": "0072e6b934945d5ba08f9729e00847391922f2f6026a435e704634fb93bf4502",
+      "templates.grokGroup.personal": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
+      "templates.grokGroup.recruiting": "b6cef17edfa8e4e2c748e705bb5cb89bd07829ed070f3c56c4873caec235ddee",
+      "templates.grokGroup.product": "fb9ef894175c327470f768d95ca7bee65e19853a0eaace3805f8a7b8a12270da",
+      "templates.grokGroup.operations": "358cc201f87d9dc9defd3eac467a62fae720aa99a76be8b98e0fc9b3893a427d",
+      "templates.grokGroup.official": "97ed38fa07cf60f97a69ce096006ca16e66c759b546300c20af93dd4c513be9a",
+      "templates.grokGroup.other": "f97e9da0e3b879f0a9df979ae260a5f7e1371edb127c1862d4f861981166cdc1"
     },
     "uk": {
       "pro.fromPrice": "a48a04a457d60b08b54fc83e7a6c4584ffedb1e23621859084900c8521a3af7b",

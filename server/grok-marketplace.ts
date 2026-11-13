@@ -292,6 +292,13 @@ export function grokCatalogEntries(cache: GrokMarketplaceCache): TeamCatalogEntr
     members: 1,
     skills: bot.skills.map((skill) => skill.name).slice(0, 20),
     requires: { apps: bot.integrations.map((app) => app.name).slice(0, 30) },
+    card: {
+      color: COLORS[bot.color.toLowerCase()] ?? "blue",
+      creator: clip(bot.creatorName, 100),
+      group: clip(primaryCategory(bot) || "Bots", 60),
+      description: clip(bot.description || tagline(bot), 600),
+      routines: bot.routines.length,
+    },
   }));
 }
 

@@ -10,10 +10,12 @@ import { api, useStore, type Bot, type Group } from "@/state/store";
 import { ArrowLeft, Check, Compass, ExternalLink, FolderOpen, Github, Loader2, Search, Share2, UploadCloud, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { catalogCopy, catalogMatches, isGrokEntry, type TeamCatalog, type TeamCatalogEntry } from "@/lib/team-catalog";
+import { catalogMatches, isGrokEntry, type TeamCatalog, type TeamCatalogEntry } from "@/lib/team-catalog";
 
 import { TEAM_GLYPHS, TeamImportDetails } from "./TeamImportDetails";
 import { ReadyBotGallery } from "./ReadyBotGallery";
+import { CatalogCards } from "./CatalogCards";
+import { stoppedAtBotLimit } from "@/lib/bot-limit";
 import { ShareTeamDialog } from "./ShareTeamDialog";
 import { OrgLibraryTab } from "./TeamLibraryPanelOrg";
 import { MAX_TEAM_BACKUP_BYTES } from "../../shared/team-backup";
@@ -233,6 +235,23 @@ export function TeamLibraryPanel({
     setError("");
     try {
       previewManifest(teamImportPreview(await api(`/api/team-library/teams/${entry.slug}`)), "library");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusySlug(null);
+    }
+  };
+
+  /** "+ Add" on a card: the same import as Add on the preview, without stopping at the preview. */
+  const addLibraryEntry = async (entry: TeamCatalogEntry) => {
+    if (stoppedAtBotLimit(state)) return;
+    setBusySlug(entry.slug);
+    setError("");
+    try {
+      const preview = teamImportPreview(await api(`/api/team-library/teams/${entry.slug}`));
+      const response = await addTemplate(preview.manifest, dispatch);
+      track("team_imported", { members: response.bots.length, source: "library", mode: "add", format: preview.kind });
+      onImported({ name: preview.name, members: response.bots.length, ...(response.connections?.length ? { connections: response.connections.length } : {}) });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -664,6 +683,7 @@ export function TeamLibraryPanel({
               {tab === "explore" && (
                 <div>
                   <ReadyBotGallery search={search} onDialog={setNestedDialog} onAdded={onClose} />
+                  {error && <div role="alert" className="mb-4 rounded-lg bg-danger/10 px-3 py-2 text-[13px] text-danger">{error}</div>}
                   <div className="mb-3 text-[12px] font-medium text-ink-secondary">
                     {search ? t("templates.searchResults") : t("templates.communityTemplates")}
                   </div>
@@ -686,33 +706,7 @@ export function TeamLibraryPanel({
                           {catalog.grok?.syncedAt ? ` · ${t("templates.grokSynced", { time: new Date(catalog.grok.syncedAt).toLocaleString() })}` : ""}
                         </div>
                       )}
-                    <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
-                      {teams.map((entry, index) => {
-                        const copy = catalogCopy(entry);
-                        return (
-                        <article key={entry.slug} className="flex min-h-[104px] items-center gap-3 border-b border-hairline/35 px-1 py-4">
-                          <TeamGlyph index={index} />
-                          <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-[14px] font-medium text-ink">{copy.name}</h3>
-                            <p className="mt-0.5 truncate text-[13px] text-ink-secondary">{copy.outcome ?? copy.summary}</p>
-                            <p className="mt-1 truncate text-[12px] text-ink-tertiary">
-                              {t("templates.botCount", { count: entry.members })} · {t("templates.playbookCount", { count: entry.skills.length })}
-                              {entry.requires.apps.length > 0 && ` · ${entry.requires.apps.join(", ")}`}
-                              {entry.setupMinutes && ` · ${t("templates.minutes", { count: entry.setupMinutes })}`}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => void loadLibraryTeam(entry)}
-                            disabled={busySlug !== null}
-                            className="flex min-w-[72px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-40"
-                          >
-                            {busySlug === entry.slug && <Loader2 size={13} className="animate-spin" />}
-                            {busySlug === entry.slug ? t("templates.loadingShort") : t("templates.load")}
-                          </button>
-                        </article>
-                        );
-                      })}
-                    </div>
+                      <CatalogCards entries={teams} busy={busySlug} groups={part === 1} onAdd={(entry) => void addLibraryEntry(entry)} onDetails={(entry) => void loadLibraryTeam(entry)} />
                     </div>
                   ))}
                   {!catalogLoading && catalog && visibleTeams.length === 0 && (
