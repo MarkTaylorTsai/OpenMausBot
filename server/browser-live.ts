@@ -10,6 +10,7 @@ import { closeBrowserSession } from "./browser-engine.ts";
 import { DialogWatch, localDevToolsUrl } from "./browser-dialogs.ts";
 import type { Cdp, CdpListeners } from "./browser-sites.ts";
 import { relay } from "./browser-relay.ts";
+import { readTabList } from "./browser-tab-sync.ts";
 import { HOLD_LIMITS, HoldClock, type HoldLimits } from "./browser/hold.ts";
 import { BROWSER_HELD_ELSEWHERE } from "../shared/browser-held.ts";
 
@@ -34,7 +35,6 @@ const FRAME_WINDOW = 2;
 /** Inputs one request may carry, so a remote panel's typing does not wait a round trip per key. */
 export const INPUT_BATCH_LIMIT = 64;
 const ENDED_PROBE = { timeoutMs: 5_000, maxBytes: 65_536 };
-const TAB_SYNC = { timeoutMs: 2_000, maxBytes: 262_144 };
 /** What a view hears when its browser closed unused: it stops, where reconnecting would start the browser again. */
 export const BROWSER_ASLEEP_ERROR = { type: "error", retryable: false, asleep: true, message: "This browser closed after it sat unused, to save memory. Reconnect to open it again." };
 /** What a view hears while its browser cannot show it yet; it keeps waiting. */
@@ -769,22 +769,12 @@ export class BrowserLive {
     finally { viewer.restarting = false; if (viewer.closed) this.runtime.release(viewer.session, viewer.person); this.control(viewer.session); }
   }
 
-  /** agent-browser (0.36) learns that a page closed itself (a sign-in popup, window.close) only at its next command, so the
-   * view kept a tab that was gone. Reading the tab list makes it send the current one. Only while Chrome is connected, since
-   * a command would start a stopped one, and never behind a bot's or a person's own action, where it would queue. */
+  /** Free: nothing runs in the session, or only this person's own hold with no action under way. */
   private async syncTabs(viewer: Viewer): Promise<void> {
-    const port = viewer.port;
-    // A person's hold with nothing running leaves the engine free; any other work in the session does not.
-    const free = () => !viewer.pendingActions && (!this.runtime.working(viewer.session) || this.runtime.canControl(viewer.session, viewer.person));
-    if (!port || viewer.syncingTabs || viewer.restarting || !free()) return;
+    const free = () => this.current(viewer) && !viewer.pendingActions && (!this.runtime.working(viewer.session) || this.runtime.canControl(viewer.session, viewer.person));
+    if (!viewer.port || viewer.syncingTabs || viewer.restarting || !free()) return;
     viewer.syncingTabs = true;
-    try {
-      const status = await relay(port, { action: "stream_status" }, TAB_SYNC);
-      if (status.success && status.data?.connected === true && this.current(viewer) && free()) {
-        await relay(port, { action: "tab_list" }, TAB_SYNC);
-      }
-    } catch {
-    } finally { viewer.syncingTabs = false; }
+    await readTabList(viewer.port, free).catch(() => false).finally(() => { viewer.syncingTabs = false; });
   }
 
   /** The daemon runs one command per session at a time, so an answer to a read sent after an unanswered command proves it ended. */
