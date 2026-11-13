@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,7 @@ import {
   prepareBrowserSessionState,
   resolveAgentBrowserBinary,
   setBrowserViewport,
+  setAsideStaleBrowserState,
 } from "./browser-engine.ts";
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, agentBrowserReleaseVersion, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 import { browserBundlePaths, browserBundleSpec, SUPPORTED_BROWSER_TARGETS } from "./browser-bundle-release.ts";
@@ -1073,5 +1074,39 @@ describe("what a bot gets", () => {
     expect(fresh).toMatch(/^[0-9a-f]{64}$/u);
     expect(fresh).not.toBe(key);
     mkdirSync(join(dataDir, "unused"));
+  });
+});
+
+describe("a saved browser state older than the profile's cookies", () => {
+  const stage = (stateAgeMs: number) => {
+    const home = mkdtempSync(join(tmpdir(), "omb-stale-state-"));
+    const profile = join(home, "profile");
+    mkdirSync(join(profile, "Default", "Network"), { recursive: true });
+    writeFileSync(join(profile, "Default", "Network", "Cookies"), "signed in");
+    const sessions = join(home, ".agent-browser", "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const state = join(sessions, "omb-key-bot-1.json.enc");
+    writeFileSync(state, "state");
+    const at = new Date(Date.now() - stateAgeMs);
+    utimesSync(state, at, at);
+    const env = { HOME: home, USERPROFILE: home, AGENT_BROWSER_SESSION: "bot-1", AGENT_BROWSER_RESTORE: "omb-key", AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_PROFILE: profile };
+    return { home, state, env };
+  };
+
+  it("is set aside, so a daemon that was killed does not sign the person out; one an orderly close wrote is kept", () => {
+    const killed = stage(60_000);
+    expect(setAsideStaleBrowserState(killed.env)).toBe(true);
+    expect(existsSync(killed.state)).toBe(false);
+    expect(readFileSync(`${killed.state}.stale`, "utf8")).toBe("state");
+    expect(setAsideStaleBrowserState(killed.env)).toBe(false);
+
+    const closed = stage(1_000);
+    expect(setAsideStaleBrowserState(closed.env)).toBe(false);
+    expect(existsSync(closed.state)).toBe(true);
+
+    const temporary = stage(60_000);
+    expect(setAsideStaleBrowserState({ ...temporary.env, AGENT_BROWSER_RESTORE_SAVE: "never" })).toBe(false);
+    expect(existsSync(temporary.state)).toBe(true);
+    for (const { home } of [killed, closed, temporary]) rmSync(home, { recursive: true, force: true });
   });
 });

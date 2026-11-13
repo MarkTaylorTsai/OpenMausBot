@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
 
-import { browserEngineStatus } from "../../browser-engine.ts";
+import { browserEngineStatus, setAsideStaleBrowserState } from "../../browser-engine.ts";
 import { attachesToChrome, ownsBrowserViewport, type BrowserLaunch } from "../../browser-runtime.ts";
 import { DATA_DIR } from "../../config.ts";
 import { augmentedPath } from "../../env-path.ts";
@@ -188,6 +188,7 @@ export class ChromeLauncher implements BrowserLaunch {
   }
 
   async ready(spec: LaunchSpec): Promise<void> {
+    if (setAsideStaleBrowserState(spec.env)) this.log("browser: a saved state older than the profile's cookies was set aside, so sign-ins made since stay");
     if (!this.uses(spec)) return;
     let timer: NodeJS.Timeout | undefined;
     const done = await Promise.race([

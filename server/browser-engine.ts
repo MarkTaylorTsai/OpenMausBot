@@ -55,6 +55,32 @@ export function browserSessionsDirectory(env: NodeJS.ProcessEnv): string {
   return join(stateRoot, "sessions");
 }
 
+/** How far a saved state may trail the profile's cookies and still be the one an orderly close wrote after them. */
+const SNAPSHOT_SLACK_MS = 5_000;
+
+/** agent-browser loads a session's saved state over its profile when it starts Chrome, and saves it only on an orderly close.
+ * After a daemon that was killed or crashed, the state is older than the cookies Chrome kept writing to the profile, and
+ * loading it would sign the person out of everything they signed in to since. Such a state is set aside (kept beside it as
+ * `.stale`) so the profile's own cookies stand. Cheap enough to run before every command that may start the browser. */
+export function setAsideStaleBrowserState(env: NodeJS.ProcessEnv | Record<string, string | undefined> | undefined): boolean {
+  const session = env?.AGENT_BROWSER_SESSION, restore = env?.AGENT_BROWSER_RESTORE, profile = env?.AGENT_BROWSER_PROFILE;
+  if (!session || !restore || !profile || env?.AGENT_BROWSER_RESTORE_SAVE === "never") return false;
+  let cookies: number;
+  try { cookies = statSync(join(profile, "Default", "Network", "Cookies")).mtimeMs; } catch { return false; }
+  let directory: string;
+  try { directory = browserSessionsDirectory(env as NodeJS.ProcessEnv); } catch { return false; }
+  let setAside = false;
+  for (const suffix of [".json.enc", ".json"]) {
+    const path = join(directory, `${restore}-${session}${suffix}`);
+    try {
+      if (statSync(path).mtimeMs + SNAPSHOT_SLACK_MS >= cookies) continue;
+      renameSync(path, `${path}.stale`);
+      setAside = true;
+    } catch {}
+  }
+  return setAside;
+}
+
 function managedBrowserConfigPath(env: NodeJS.ProcessEnv): string {
   return join(browserSessionsDirectory(env), "..", "omb-managed-config.json");
 }
