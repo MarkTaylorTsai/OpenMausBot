@@ -549,7 +549,8 @@ export function browserEngineStatus(options: BrowserLookupOptions = {}): Browser
     : { kind: "unavailable", reason: `agent-browser publishes no build for ${platform}-${arch}`, installable: false };
 }
 
-const PROFILE_CACHE_ARG = `--disk-cache-size=${64 * 1024 * 1024}`;
+const WINDOWS_AUTOSAVE_OFF_MS = String(24 * 60 * 60_000);
+const PROFILE_CACHE_ARG =`--disk-cache-size=${64 * 1024 * 1024}`;
 
 /** agent-browser 0.37 relaunches a running Chrome without a word when a command's launch settings differ, so every
  * command for a session must carry these same ones. Chrome fails every connection through port 0. */
@@ -605,6 +606,9 @@ export function agentBrowserIntegration(input: {
     // A restore name, not a boolean; fixed-length because agent-browser matches name prefixes.
     env.AGENT_BROWSER_RESTORE = browserRestoreKey(input.session);
     env.AGENT_BROWSER_RESTORE_SAVE = input.persistent === false ? "never" : "auto";
+    // agent-browser 0.36.0-omb.1 (Windows): the periodic save that follows a navigation the page started itself (Enter in a
+    // form, a clicked link) ends the daemon and its Chrome. The save on close still runs, and the profile keeps the sign-ins.
+    if ((input.platform ?? process.platform) === "win32" && input.persistent !== false) env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS = WINDOWS_AUTOSAVE_OFF_MS;
     if (input.persistent !== false) env.AGENT_BROWSER_PROFILE = browserProfileDirectory(input.session, input.dataDir);
     if (input.headless !== false || displayless) {
       env.AGENT_BROWSER_HEADLESS = "1";

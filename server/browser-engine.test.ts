@@ -874,6 +874,8 @@ describe("installing the browser engine", () => {
   });
 });
 
+const windowsAutosave = process.platform === "win32" ? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "86400000" } : {};
+
 describe("what a bot gets", () => {
   // Without a gate the browser connects nowhere: Chrome fails every connection through port 0.
   const gateArgs = ["--webrtc-ip-handling-policy=disable_non_proxied_udp", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", ...credentialStoreFlags()];
@@ -958,8 +960,15 @@ describe("what a bot gets", () => {
       AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_ENCRYPTION_KEY: "session-key",
       AGENT_BROWSER_CONFIG: expect.stringContaining("omb-managed-config.json"),
       AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0", PATH: "/usr/bin",
-      AGENT_BROWSER_EXECUTABLE_PATH: "/opt/trusted chrome/chrome", ...keptNoGate("bot-1"),
+      AGENT_BROWSER_EXECUTABLE_PATH: "/opt/trusted chrome/chrome", ...keptNoGate("bot-1"), ...windowsAutosave,
     });
+  });
+
+  it("turns the engine's periodic save off on Windows, where it ends the browser after a page navigates by itself", () => {
+    const on = (platform: NodeJS.Platform, persistent = true) => agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key", platform, persistent, env: {} }).env;
+    expect(on("win32")).toMatchObject({ AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "86400000" });
+    expect(on("win32", false)).not.toHaveProperty("AGENT_BROWSER_AUTOSAVE_INTERVAL_MS");
+    expect(on("darwin")).not.toHaveProperty("AGENT_BROWSER_AUTOSAVE_INTERVAL_MS");
   });
 
   it("reads the configured Chrome path from the process only when no explicit environment is supplied", () => {
@@ -972,7 +981,7 @@ describe("what a bot gets", () => {
       AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_ENCRYPTION_KEY: "session-key",
       AGENT_BROWSER_CONFIG: expect.stringContaining("omb-managed-config.json"),
       AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0", PATH: "/usr/bin",
-      AGENT_BROWSER_EXECUTABLE_PATH: "/opt/process-chrome/chrome", ...keptNoGate("bot-1"),
+      AGENT_BROWSER_EXECUTABLE_PATH: "/opt/process-chrome/chrome", ...keptNoGate("bot-1"), ...windowsAutosave,
     });
     for (const env of [{}, { AGENT_BROWSER_EXECUTABLE_PATH: "" }]) {
       const explicit = agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", env });
