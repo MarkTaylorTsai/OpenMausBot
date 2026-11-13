@@ -14,7 +14,7 @@ import { needsNoSandbox, type ChromeIdentity } from "./identity.ts";
 import { installChromeForTesting, type ChromeForTestingPin, type DownloadProgress } from "./install.ts";
 import { chromeHost, resolveChromePlan, type ChromeEngine, type ChromeHost, type ChromePlan, type FoundChrome } from "./resolve.ts";
 import { IdentitySidecars } from "./sidecar.ts";
-import { browserLanguage, browserTimeZone, languageList, launcherPath, primaryScreen, writeLauncher, type LauncherBox, type LauncherSettings, type Screen } from "./wrapper.ts";
+import { browserLanguage, browserTimeZone, languageList, launcherFlags, launcherPath, primaryScreen, writeLauncher, type LauncherBox, type LauncherSettings, type Screen } from "./wrapper.ts";
 
 type Ready = { kind: "ready"; chrome: FoundChrome; identity: ChromeIdentity; product: string; fingerprint: string; launcher?: LauncherSettings };
 type State =
@@ -117,7 +117,35 @@ export class ChromeLauncher implements BrowserLaunch {
     if (this.state.kind === "failed" || this.plan().kind === "legacy") return {};
     void this.prepare();
     this.followTimeZone();
-    return { AGENT_BROWSER_EXECUTABLE_PATH: this.path, AGENT_BROWSER_HIDE_SCROLLBARS: "0" };
+    return { AGENT_BROWSER_EXECUTABLE_PATH: this.path, AGENT_BROWSER_HIDE_SCROLLBARS: "0", ...this.direct() };
+  }
+
+  /** Windows: agent-browser's daemon has no console, so the batch launcher it would run opens a terminal window for every
+   * Chrome it starts. Chrome is named itself and takes the launcher's flags as arguments. agent-browser 0.36 cuts
+   * AGENT_BROWSER_ARGS at commas, which every user agent holds, so that one goes in the engine's own setting. */
+  private direct(): Record<string, string> {
+    const state = this.state;
+    if (this.options.platform !== "win32" || state.kind !== "ready" || !state.launcher) return {};
+    return {
+      AGENT_BROWSER_EXECUTABLE_PATH: state.chrome.path,
+      AGENT_BROWSER_USER_AGENT: state.launcher.userAgent,
+      AGENT_BROWSER_ARGS: this.directArgs(state.launcher).join("\n"),
+    };
+  }
+
+  private directArgs(launcher: LauncherSettings): string[] {
+    return launcherFlags(launcher, "win32").filter((flag) => !flag.startsWith("--user-agent="));
+  }
+
+  /** A spec built before Chrome was prepared names the batch launcher. agent-browser restarts Chrome whenever a command's
+   * launch settings differ from the last one's, so it is given exactly what a spec built now would hold. */
+  private adopt(spec: LaunchSpec): void {
+    const state = this.state;
+    const direct = this.direct();
+    if (state.kind !== "ready" || !state.launcher || !spec.env || !direct.AGENT_BROWSER_EXECUTABLE_PATH || spec.env.AGENT_BROWSER_EXECUTABLE_PATH !== this.path) return;
+    const own = this.directArgs(state.launcher);
+    const others = (spec.env.AGENT_BROWSER_ARGS ?? "").split("\n").filter((arg) => arg && !own.includes(arg));
+    Object.assign(spec.env, direct, { AGENT_BROWSER_ARGS: [...own, ...others].join("\n") });
   }
 
   /** The owner's app can give a Cloud its time zone at any time (server/time-zone.ts): the next Chrome this starts tells
@@ -174,6 +202,7 @@ export class ChromeLauncher implements BrowserLaunch {
         : "Getting the browser ready. Try again in a moment.");
     }
     if (this.state.kind === "failed") throw new Error(`Chrome could not be started (${this.state.reason}). Try again: your next browser call uses the built-in browser.`);
+    this.adopt(spec);
   }
 
   async started(session: string, spec: LaunchSpec): Promise<void> {
@@ -204,7 +233,9 @@ export class ChromeLauncher implements BrowserLaunch {
   }
 
   private uses(spec: LaunchSpec): boolean {
-    return spec.env?.AGENT_BROWSER_EXECUTABLE_PATH === this.path && !attachesToChrome(spec.env);
+    const named = spec.env?.AGENT_BROWSER_EXECUTABLE_PATH;
+    const direct = this.direct().AGENT_BROWSER_EXECUTABLE_PATH;
+    return named !== undefined && (named === this.path || named === direct) && !attachesToChrome(spec.env ?? {});
   }
 
   private fresh(state: Ready): boolean {

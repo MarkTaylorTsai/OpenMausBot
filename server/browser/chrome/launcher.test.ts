@@ -266,3 +266,23 @@ describe("the Chrome launcher", () => {
     expect(attached.forget).toHaveBeenCalledWith("bot-1");
   });
 });
+
+describe("the Chrome launcher on Windows", () => {
+  it("names Chrome itself once it is prepared, and gives a spec built earlier the same launch settings", async () => {
+    const machine = mac();
+    const chrome = launcher(machine, { platform: "win32" });
+    const early = { command: "agent-browser.exe", env: { ...chrome.env(), AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_ARGS: "--disk-cache-size=1\n--gate" } as Record<string, string | undefined> };
+    expect(early.env.AGENT_BROWSER_EXECUTABLE_PATH).toBe(chrome.path);
+    await chrome.ready(early);
+    const settled = chrome.env();
+    expect(settled).toEqual({
+      AGENT_BROWSER_EXECUTABLE_PATH: machine.chrome, AGENT_BROWSER_HIDE_SCROLLBARS: "0", AGENT_BROWSER_USER_AGENT: identity("155").userAgent,
+      AGENT_BROWSER_ARGS: "--disable-blink-features=AutomationControlled\n--screen-info={1440x900}",
+    });
+    expect(settled.AGENT_BROWSER_ARGS).not.toContain(",");
+    const late = { ...settled, AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_ARGS: `${settled.AGENT_BROWSER_ARGS}\n--disk-cache-size=1\n--gate` };
+    expect(early.env).toEqual(late);
+    await chrome.ready(early);
+    expect(early.env).toEqual(late);
+  });
+});
