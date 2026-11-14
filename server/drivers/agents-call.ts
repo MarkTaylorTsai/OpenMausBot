@@ -514,23 +514,27 @@ export async function callTool(called: string, input: Json, context: ToolCallCon
     const botName = String(args.name ?? "").trim();
     const role = String(args.role ?? "").trim();
     const instructions = String(args.instructions ?? "").trim();
-    if (!botName || !role || !instructions) {
-      return { text: "create_bot needs name, role, and instructions.", isError: true };
+    const template = typeof args.template === "string" ? args.template.trim() : "";
+    if (!template && (!botName || !role || !instructions)) {
+      return { text: "create_bot needs name, role, and instructions, or a template id from list_team_library.", isError: true };
     }
     const r = await api(`/api/internal/create-bot`, {
       method: "POST",
       body: JSON.stringify({
         fromBotId: BOT_ID,
         fromThreadId: THREAD_ID,
-        name: botName,
-        role,
-        instructions,
+        ...(botName ? { name: botName } : {}),
+        ...(role ? { role } : {}),
+        ...(instructions ? { instructions } : {}),
+        ...(template ? { template } : {}),
+        ...(typeof args.team === "string" ? { team: args.team.trim() } : {}),
         ...(args.modelSelection !== undefined ? { modelSelection: args.modelSelection } : {}),
         ...(typeof args.cwd === "string" ? { cwd: args.cwd.trim() } : {}),
       }),
     });
+    if (r.error) return { text: `The bot was not created: ${String(r.error)}`, isError: true };
     if (r.state === "pending") {
-      return { text: `One review card is visible: ${String(r.title)}. @${botName} has not been created yet. End this turn; the decision and structured result resume you automatically once. Do not ask again, poll, or repeat this request.` };
+      return { text: `One review card is visible: ${String(r.title)}. @${botName || template} has not been created yet. End this turn; the decision and structured result resume you automatically once. Do not ask again, poll, or repeat this request.` };
     }
     if (!r.id) return completedProposalResult(r, `creating @${botName}`) ?? { text: `@${botName} was not created.`, isError: true };
     return {

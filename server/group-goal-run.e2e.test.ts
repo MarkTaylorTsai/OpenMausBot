@@ -1086,10 +1086,11 @@ describe("goal-driven channel runs", () => {
     expect(queued.status).toBe(202);
     expect(queued.body).toMatchObject({ queued: true, threadId: room.threadId });
     expect(queued.body.queueId).toEqual(expect.any(String));
-    expect(queued.body.message).toBeUndefined();
+    // Shown in the room at once, like any chat app; the room still answers it after the running turn.
+    expect(queued.body.message).toMatchObject({ role: "user", text: "second request", sendId: secondSendId, queueId: queued.body.queueId });
 
     const retryWhileQueued = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
-    expect(retryWhileQueued.body).toMatchObject({ queued: true, queueId: queued.body.queueId });
+    expect(retryWhileQueued.body.message).toMatchObject({ id: queued.body.message.id, sendId: secondSendId });
     writeFileSync(queueFinishGate, "observed the queued message and idempotent retry");
 
     await expect.poll(async () => {

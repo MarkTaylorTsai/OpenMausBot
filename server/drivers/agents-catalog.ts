@@ -381,13 +381,15 @@ const TOOL_DEFINITIONS = [
   {
     name: "create_bot",
     description:
-      "Chief of Staff only: add a specialist to your section now; the person can undo it. instructions become its soul. Omit modelSelection for the workspace default, or use exact IDs from list_team_setup. It starts with your connected apps, at the default access level. Assign work with coordinate_bots. At most four per turn.",
+      "Chief of Staff only: add a specialist to your section (or team, one you manage) now; the person can undo it. instructions become its soul. template: a grokBots id from list_team_library adds that bot whole; name/role/instructions then optional. Omit modelSelection for the workspace default, or use exact IDs from list_team_setup. It starts with your connected apps, at the default access level. Assign work with coordinate_bots. At most four per turn.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Short, unique display name for the specialist." },
         role: { type: "string", description: "The specialist's job title or role." },
         instructions: { type: "string", description: "What this specialist is responsible for and how it should work." },
+        template: { type: "string" },
+        team: { type: "string", maxLength: 60 },
         modelSelection: { type: "object", additionalProperties: false, properties: {
           instanceId: { type: "string" }, model: { type: "string" },
           effort: { type: "string" }, variant: { type: "string" },
@@ -398,7 +400,8 @@ const TOOL_DEFINITIONS = [
           description: "Absolute path of the folder this specialist's tools read and write in (for example /Users/me/Projects/site). It must already exist. Leave it out for the specialist's private workspace.",
         },
       },
-      required: ["name", "role", "instructions"],
+      // name, role and instructions are required unless template is given; the server checks.
+      required: [] as string[],
     },
   },
   {
@@ -408,7 +411,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: "list_team_library",
-    description: "Chief of Staff only: ready-made teams, each with a summary and roles (lead = the team's Chief). Create roles with create_bot.",
+    description: "Chief of Staff only: ready-made teams, each with a summary and roles (lead = the team's Chief), and grokBots (Grok Bot Marketplace). Create roles with create_bot; add a grokBots bot yourself with create_bot { template }.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {

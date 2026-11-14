@@ -616,7 +616,7 @@ import { viewerTargetId } from "../shared/desktop-viewer.ts";
 import { createComputerPreviews } from "./computer-previews.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { createAntigravityAccountRoutes } from "./routes/antigravity-accounts.ts";
-import { createConfigRoutes } from "./routes/config.ts"; import { startGrokMarketplaceSync } from "./grok-marketplace.ts";
+import { createConfigRoutes } from "./routes/config.ts"; import { grokTemplateBotFields, startGrokMarketplaceSync } from "./grok-marketplace.ts";
 import { createInstanceRoutes } from "./routes/instances.ts";
 import { createMcpConfig } from "./host/mcp-config.ts";
 import { createMcpServerRoutes } from "./routes/mcp-servers.ts";
@@ -10767,14 +10767,14 @@ function startGroupTurn(
     ? (() => {
         const before = store.messagesFor(threadId);
         const narration = roomTurnNarrationIds(before);
-        return before.filter((m) => m.kind === "text" && m.text && !narration.has(m.id)).slice(-GROUP_CONTEXT_MESSAGES);
+        return before.filter((m) => m.kind === "text" && m.text && !narration.has(m.id) && !(m.queueId && options.queuedGroup?.some((item) => item.id === m.queueId))).slice(-GROUP_CONTEXT_MESSAGES);
       })()
     : [];
-  const queuedGroup = options.queuedGroup;
+  const queuedGroup = options.queuedGroup; const shownAlready = (id: string) => store.messagesFor(threadId).find((line) => line.role === "user" && line.queueId === id);
   const message = queuedGroup && queuedGroup.length > 0
     ? (() => {
         for (const item of queuedGroup.slice(0, -1)) {
-          store.appendMessage(threadId, {
+          if (!shownAlready(item.id)) store.appendMessage(threadId, {
             role: "user",
             kind: "text",
             text: item.text,
@@ -10788,7 +10788,7 @@ function startGroupTurn(
           });
         }
         const last = queuedGroup[queuedGroup.length - 1]!;
-        return store.appendMessage(threadId, {
+        return shownAlready(last.id) ?? store.appendMessage(threadId, {
           role: "user",
           kind: "text",
           text: last.text,
@@ -14153,18 +14153,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (store.bots.length >= MAX_WORKSPACE_BOTS) {
           return json(res, 409, { error: `this workspace is limited to ${MAX_WORKSPACE_BOTS} bots` });
         }
-        const name = String(body.name ?? "").trim();
-        const role = String(body.role ?? "").trim();
-        const instructions = String(body.instructions ?? "").trim();
+        const template = typeof body.template === "string" ? grokTemplateBotFields(DATA_DIR, body.template.trim()) : null; if (typeof body.template === "string" && !template) return json(res, 404, { error: `No template ${body.template} in the Grok Bot Marketplace copy; copy a template id from list_team_library's grokBots` }); const name = String(body.name || template?.name || "").trim(); const team = typeof body.team === "string" ? body.team.trim() : undefined;
+        const role = String(body.role || template?.title || "").trim(); const extra = String(body.instructions ?? "").trim();
+        const instructions = template ? [template.soul, extra && `## From your Chief of Staff\n${extra}`].filter(Boolean).join("\n\n") : extra;
         if (!name || !role || !instructions) {
-          return json(res, 400, { error: "name, role, and instructions are required" });
+          return json(res, 400, { error: "name, role, and instructions are required (or a template)" });
         }
         if (name.length > 80) return json(res, 400, { error: "name must be at most 80 characters" });
         if (role.length > 120) return json(res, 400, { error: "role must be at most 120 characters" });
         // Both fields are quoted into every other room member's system prompt, one line each.
         if (!fitsOnOneLine(name)) return json(res, 400, { error: "name must fit on one line" });
         if (!fitsOnOneLine(role)) return json(res, 400, { error: "role must fit on one line" });
-        if (instructions.length > MAX_CREATED_BOT_INSTRUCTIONS) {
+        if ((template ? extra : instructions).length > MAX_CREATED_BOT_INSTRUCTIONS) {
           return json(res, 400, { error: `instructions must be at most ${MAX_CREATED_BOT_INSTRUCTIONS} characters; these are ${instructions.length}. Shorten them to what this bot does and how it works, or create it with propose_team_setup, where soul takes up to ${BOT_PROFILE_LIMITS.soul} bytes.` });
         }
         let selection: ModelSelection;
@@ -14193,7 +14193,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const duplicate = store.bots.find(
           (candidate) =>
             !candidate.hidden &&
-            sectionKey(candidate.section) === sectionKey(chief.section) &&
+            sectionKey(candidate.section) === sectionKey(team ?? chief.section) &&
             candidate.name.trim().toLowerCase() === name.toLowerCase(),
         );
         if (duplicate) {
@@ -14213,8 +14213,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               fields: {
                 name,
                 title: role,
-                description: summary.length > 200 ? `${summary.slice(0, 199).trimEnd()}…` : summary,
-                soul: instructions,
+                description: template?.description ?? (summary.length > 200 ? `${summary.slice(0, 199).trimEnd()}…` : summary),
+                soul: instructions, ...(team !== undefined ? { section: team } : {}),
                 modelSelection: selection,
                 ...(cwd !== undefined ? { cwd } : {}),
               },

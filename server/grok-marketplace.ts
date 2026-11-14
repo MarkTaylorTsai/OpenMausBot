@@ -221,6 +221,49 @@ export const grokPageUrl = (id: string) => `${GROK_MARKETPLACE_ORIGIN}/bot/marke
 const primaryCategory = (bot: GrokTemplate) => bot.categories.find((value) => !/^from /i.test(value)) || bot.categories[0] || "";
 const tagline = (bot: GrokTemplate) => bot.summary || bot.description || `${bot.name} from the Grok Bot Marketplace`;
 
+/** A template's standing instructions. With `playbooks`, its skills are written in too, for a bot that gets no skill
+ * files (one a Chief creates from the template). */
+function templateSoul(bot: GrokTemplate, playbooks: boolean): string {
+  const url = grokPageUrl(bot.id);
+  const head = [
+    `You are ${bot.name}, set up from the Grok Bot Marketplace template by ${bot.creatorName || "its creator"} (${url}).`,
+    bot.instructions,
+    bot.memories.length ? `## What you already know\n${bot.memories.map((memory) => `- ${memory.description.replace(/\n+/g, " ")}`).join("\n")}` : "",
+    bot.routines.length ? `## Routines the original ran (not scheduled here; offer to set them up when they would help)\n${bot.routines.map((routine) => `- ${routine.name}: ${routine.summary}`).join("\n")}` : "",
+    "## Where you run\nThis template was written for Grok Bot. Tools it names that only Grok Bot has (the Grok CLI, Grok plugins, Grok Finance) may not exist on this computer: use what this computer and your connected apps provide, and say plainly when something the template expects is missing.",
+  ].filter(Boolean).join("\n\n");
+  if (!playbooks || bot.skills.length === 0) return clipBytes(head, 23_500);
+  const room = 23_500 - encoder.encode(head).length - 200;
+  const each = Math.max(400, Math.floor(room / bot.skills.length));
+  const books = bot.skills.map((skill) => `### ${skill.name}\nWhen: ${oneLine(skill.description || skill.name, 300)}\n\n${clipBytes(skill.content || skill.description, each)}`);
+  return clipBytes(`${head}\n\n## Playbooks\n${books.join("\n\n")}`, 23_500);
+}
+
+/** What a Chief needs to create one bot from a `grok-<id>` template: its name, role, summary and full instructions. */
+export function grokTemplateBotFields(dataDir: string, slug: string): { name: string; title: string; description: string; soul: string } | null {
+  if (!slug.startsWith(GROK_SLUG_PREFIX)) return null;
+  const bot = readGrokMarketplace(dataDir).bots.find((entry) => entry.id === slug.slice(GROK_SLUG_PREFIX.length));
+  if (!bot) return null;
+  return {
+    name: oneLine(bot.name, 80),
+    title: oneLine(primaryCategory(bot) ? `${primaryCategory(bot)} specialist` : "Specialist", 120),
+    description: oneLine(bot.description || tagline(bot), 200),
+    soul: templateSoul(bot, true),
+  };
+}
+
+/** The Grok Bot Marketplace copy as a Chief reads it: enough to pick one, by its `template` id. */
+export function grokTemplateListing(dataDir: string): Array<{ template: string; name: string; by: string; category: string; does: string; apps?: string[] }> {
+  return readGrokMarketplace(dataDir).bots.map((bot) => ({
+    template: `${GROK_SLUG_PREFIX}${bot.id}`,
+    name: bot.name,
+    by: bot.creatorName,
+    category: primaryCategory(bot),
+    does: oneLine(tagline(bot), 220),
+    ...(bot.integrations.length ? { apps: bot.integrations.map((app) => app.name).slice(0, 8) } : {}),
+  }));
+}
+
 /** One template as an ordinary one-bot package: its standing instructions carry the template's instructions and
  * memories, its skills the template's playbooks, and the template's routines and apps are listed for the person. */
 export function grokTemplatePackage(bot: GrokTemplate): ParsedBotPackage {
@@ -234,13 +277,7 @@ export function grokTemplatePackage(bot: GrokTemplate): ParsedBotPackage {
     const body = skill.content || skill.description || skill.name;
     return [{ name, description, source: url, instructions: `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n# ${skill.name}\n\n${clipBytes(body, 200_000)}\n` }];
   });
-  const soul = clipBytes([
-    `You are ${bot.name}, set up from the Grok Bot Marketplace template by ${bot.creatorName || "its creator"} (${url}).`,
-    bot.instructions,
-    bot.memories.length ? `## What you already know\n${bot.memories.map((memory) => `- ${memory.description.replace(/\n+/g, " ")}`).join("\n")}` : "",
-    bot.routines.length ? `## Routines the original ran (not scheduled here; offer to set them up when they would help)\n${bot.routines.map((routine) => `- ${routine.name}: ${routine.summary}`).join("\n")}` : "",
-    "## Where you run\nThis template was written for Grok Bot. Tools it names that only Grok Bot has (the Grok CLI, Grok plugins, Grok Finance) may not exist on this computer: use what this computer and your connected apps provide, and say plainly when something the template expects is missing.",
-  ].filter(Boolean).join("\n\n"), 23_500);
+  const soul = templateSoul(bot, false);
   const category = primaryCategory(bot) || "Grok Bot Marketplace";
   return parseBotPackage({
     format: "openmaus.package",

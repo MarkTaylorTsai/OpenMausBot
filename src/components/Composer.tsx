@@ -407,7 +407,8 @@ export function Composer({
   };
 
   const sharedChat = Boolean(state.config?.team && !group && profile?.tasks?.some((task) => task.threadId === threadId && !task.private));
-  const queuedMessages = sharedChat ? [] : state.queued ?? [];
+  // A room shows a waiting message in the conversation itself (the server records it at once), so it is not listed here too.
+  const queuedMessages = sharedChat || group ? [] : state.queued ?? [];
   const pendingCount = queuedMessages.length;
   const canSteerQueued = composerCanSteerQueuedMessages(
     busy,

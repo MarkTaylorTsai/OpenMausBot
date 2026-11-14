@@ -1,6 +1,8 @@
 import { hasTeamAuthority, peerAllowed } from "../peer-roster.ts"; import { chiefLevel } from "../chief-level.ts";
 import type { BotRecord } from "../store.ts";
 import { libraryTeamRoles } from "../team-library.ts";
+import { grokTemplateListing } from "../grok-marketplace.ts";
+import { DATA_DIR } from "../config.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
 interface CatalogInstance {
@@ -23,6 +25,7 @@ export function createInternalChiefTeamRoutes(deps: {
   bots(): readonly BotRecord[];
   instances(): Promise<readonly CatalogInstance[]>;
   library?: typeof libraryTeamRoles;
+  grokTemplates?: () => ReturnType<typeof grokTemplateListing>;
 }): RouteHandler {
   const chief = () => {
     const bot = deps.bot();
@@ -32,14 +35,18 @@ export function createInternalChiefTeamRoutes(deps: {
     if (method !== "GET" || (path !== "/api/internal/team-setup-catalog" && path !== "/api/internal/team-library")) return PASS;
     if (!chief()) return json(res, 403, { error: NOT_CHIEF });
     if (path === "/api/internal/team-library") {
+      // The daily Grok Bot Marketplace copy: one bot each, added whole with create_bot's template.
+      const grokBots = (deps.grokTemplates ?? (() => grokTemplateListing(DATA_DIR)))();
+      const grok = grokBots.length ? { grokBots, grokBotsHow: "Each grokBots entry is one ready-made bot. Add it with create_bot { template: <its template id>, team: <an authorized team> }; name and role are optional (give a Chinese name if the person wants one). Its full instructions and playbooks come with it." } : {};
       let teams: Awaited<ReturnType<typeof libraryTeamRoles>>;
       try {
         teams = await (deps.library ?? libraryTeamRoles)();
       } catch {
+        if (grokBots.length) { deps.requireActive(); return chief() ? json(res, 200, { teams: [], ...grok }) : json(res, 403, { error: NOT_CHIEF }); }
         return json(res, 502, { error: "The team library can't be reached right now. Build the team from what the person asked." });
       }
       deps.requireActive();
-      return chief() ? json(res, 200, { teams }) : json(res, 403, { error: NOT_CHIEF });
+      return chief() ? json(res, 200, { teams, ...grok }) : json(res, 403, { error: NOT_CHIEF });
     }
     const instances = await deps.instances();
     deps.requireActive();

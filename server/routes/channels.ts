@@ -418,7 +418,10 @@ export function createChannelRoutes(deps: ChannelRouteDeps): RouteHandler {
               trigger,
               mentions,
             });
-            return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
+            // Shown in the room at once, as any chat app would; the room answers it when the running turn ends, and the
+            // drain finds it by queueId instead of adding it again.
+            const message = store.appendMessage(threadId, { role: "user", kind: "text", text, replyToId: replyTo?.id, sendId, channelMode, queueId: queued.id, via, sender: messageSender(auth) });
+            return { ok: true as const, queued: true as const, queueId: queued.id, threadId, message };
           }
           const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode, undefined, { via, sender: messageSender(auth), trigger, threadId, mentions });
           return { ok: true as const, threadId, message };
