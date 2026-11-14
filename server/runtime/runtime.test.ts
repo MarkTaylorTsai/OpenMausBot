@@ -4,7 +4,7 @@ import { addHeldSecretScrubber, HELD_SECRET_MASK } from "../../shared/redact.ts"
 import { checkInvariants } from "./invariants.ts";
 import { Runtime, type BeginRequest } from "./runtime.ts";
 import { openRuntimeStore, type RuntimeStore } from "./store.ts";
-import { CUT_TWICE, INTERRUPTED_OUTWARD, loopStop, nextGuard, outwardDetail } from "./tree.ts";
+import { CUT_TWICE, INTERRUPTED_OUTWARD, isTerminal, loopStop, nextGuard, outwardDetail } from "./tree.ts";
 import type { Assignment, Clock, EnqueueRequest, Limits, RunInput, RunResult, TurnRunner } from "./types.ts";
 
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -1436,6 +1436,21 @@ describe("Runtime: at Full access a question is its requester's to answer, and o
     expect(w.store.get(builder.id)?.answeredBy).toBeUndefined();
     w.runtime.tick(); await flush();
     expect(runsOf(w, root.id).at(-1)?.input.settled?.map(a => a.id)).toEqual([builder.id]);
+    expect(w.store.get(root.id)?.status).toBe("completed");
+    invariants(w);
+  });
+
+  it("stops a teammate that keeps asking the question it was already answered, instead of waking its requester forever", async () => {
+    // Every turn the builder asks again, whatever the answer: the loop a person saw as the same message over and over.
+    const w = world((a) => a.assignee.botId === "builder" ? { kind: "needs_input", question: "無。", decide: {} } : undefined);
+    const root = w.runtime.begin(beginReq());
+    const builder = ok(w.runtime.enqueue(full("builder", root.id)));
+    w.runtime.end(root.id, { ok: true, text: "Handed out" });
+    for (let i = 0; i < 20 && !isTerminal(w.store.get(builder.id)!); i += 1) { w.runtime.tick(); await flush(); }
+    expect(w.store.get(builder.id)).toMatchObject({ status: "failed", outcome: "stalled" });
+    expect(w.store.get(builder.id)?.outcomeDetail).toContain("asked the same question again after 2 answers");
+    expect(runsOf(w, builder.id)).toHaveLength(3);
+    for (let i = 0; i < 5; i += 1) { w.runtime.tick(); await flush(); }
     expect(w.store.get(root.id)?.status).toBe("completed");
     invariants(w);
   });

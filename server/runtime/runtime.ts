@@ -39,6 +39,8 @@ const BRIEF_MAX = 12_000;
 const RESULT_MAX = 12_000;
 const STOPPED_WITH_REQUEST = "Stopped with the request it was for";
 const DETAIL_MAX = 400;
+/** Answers a teammate gets on one identical question before asking it again stops it. */
+const REPEATED_ASK_LIMIT = 2;
 
 const defaultClock: Clock = { now: () => Date.now(), monotonic: () => performance.now() };
 
@@ -62,6 +64,8 @@ export class Runtime {
   private readonly turns = new Map<string, LiveTurn>();
   private readonly rootActivity = new Map<string, number>();
   private readonly heldFor = new Map<string, string>();
+  /** The last question each parked teammate was answered on, and how many answers in a row it took. */
+  private readonly answeredAsks = new Map<string, { question: string; times: number }>();
   private readonly reportDue = new Set<string>();
   private batch: Map<string, Assignment> | null = null;
   private lastThrew = false;
@@ -486,6 +490,15 @@ export class Runtime {
     }
     delete n.guard;
     if (result.kind === "needs_input") {
+      // A teammate that asks the very question it was already answered twice is looping: each answer resumes it, it asks
+      // again, and that wakes its requester again. The requester's own turns renew the wake budget, so stop it here.
+      const asked = clip(result.question, BRIEF_MAX).trim(), seen = this.answeredAsks.get(n.id);
+      if (n.parentId && seen && seen.question === asked && seen.times >= REPEATED_ASK_LIMIT) {
+        this.answeredAsks.delete(n.id);
+        this.store.update(n, { kind: "stalled", at: now, detail: `no progress: asked the same question ${seen.times + 1} times` });
+        this.settle(n, "failed", "stalled", `Stopped: asked the same question again after ${seen.times} answers: ${clip(asked, DETAIL_MAX)}`);
+        return;
+      }
       n.status = "needs_input"; n.question = clip(result.question, BRIEF_MAX); n.lastActivityAt = now; delete n.remindedAt;
       if (result.cards?.length) n.cards = result.cards; else delete n.cards;
       const choice = result.decide?.default?.trim();
@@ -550,6 +563,8 @@ export class Runtime {
     const n = this.store.get(id);
     if (!n || n.status !== "needs_input") return false;
     const now = this.clock.now();
+    const prior = n.question?.trim(), seen = this.answeredAsks.get(id);
+    if (prior !== undefined) this.answeredAsks.set(id, { question: prior, times: seen?.question === prior ? seen.times + 1 : 1 });
     // Mask secrets before an over-long answer is clipped, so the cut can never leave part of one that redaction no longer matches.
     n.answer = clip(text.length > BRIEF_MAX ? redactSecretsInText(text) : text, BRIEF_MAX); delete n.question; delete n.decide; n.status = "queued"; n.lastActivityAt = now;
     if (by) n.answeredBy = by; else delete n.answeredBy;
@@ -675,6 +690,7 @@ export class Runtime {
     this.turns.get(n.id)?.controller.abort();
     this.turns.delete(n.id);
     this.heldFor.delete(n.id);
+    this.answeredAsks.delete(n.id);
     if (root?.id === n.id) this.rootActivity.delete(n.id);
     this.touch(n, ...root && root.id !== n.id ? [root] : []);
     this.report(n, ownTurn);
